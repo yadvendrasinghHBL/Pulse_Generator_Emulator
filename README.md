@@ -26,6 +26,7 @@ holds the MCU in reset (`docs/HARDWARE.md` finding 3). All project tools do this
 | For | Read |
 |---|---|
 | Commands, output behaviour, testing, firmware update | [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) |
+| Manual bench test with a scope (stage 1) | [`docs/MANUAL_TEST.md`](docs/MANUAL_TEST.md) |
 | Pins, J8 header, known board issues (**read before powering a board**) | [`docs/HARDWARE.md`](docs/HARDWARE.md) |
 | Stages, status, open decisions, log | [`PLAN.md`](PLAN.md) |
 | Changes per version | [`CHANGELOG.md`](CHANGELOG.md) |

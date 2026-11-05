@@ -14,7 +14,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 
 | Stage | Content | Pins | Status |
 |---|---|---|---|
-| 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done; automatic tests pass on board 1; scope checks open** |
+| 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done; automatic and scope tests pass on board 1 (2026-11-05); tag v0.1.0 pending** |
 | 2 | Speed model: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.1 | open |
 | 3 | 2 or 4 phase-shifted channels (90°/120°) on TIM3, `dir fwd/rev`; optional second code track on PA5 | J8.2/.3/.6/.7 (PA6, PA7, PB0, PB1) | open |
 | 4 | Output stage hardware: isolated open-drain per channel (opto + MOSFET), receiver supplies the pull-up; ground from J6.2 | add-on board | open |
@@ -26,16 +26,16 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | 1.1 | `tools/build_all.sh`: debug + release, 0 warnings | PASS (2026-11-05) |
 | 1.2 | Flash, banner, POST PASSED, `status` shows FW 0.1.0 | PASS (2026-11-05, board 1, SWD) |
 | 1.3 | `tools/pulse_test.py`: ALL CHECKS PASSED | PASS (2026-11-05, board 1, 18/18) |
-| 1.4 | Scope on J8.1 (GND J6.2): 1 kHz, 50 % duty, 3.3 V | open |
-| 1.5 | Scope: `freq` change while running gives no short pulse (single-shot trigger on pulse width < new half period) | open |
-| 1.6 | Frequency counter: absolute error at 1 kHz (expect within ±1 %, HSI16) | open |
-| 1.7 | Scope: first edge after `start` (whether the timer toggles at once or after one half period) | open |
+| 1.4 | Scope on J8.1 (GND J6.2): 1 kHz, 50 % duty, 3.3 V (procedure: `docs/MANUAL_TEST.md`) | PASS (2026-11-05, board 1, DS1054: 1000 Hz, 50 % duty; high 3.3 V with 1 kΩ load) |
+| 1.5 | Scope: `freq` change while running gives no short pulse (single-shot trigger on pulse width < new half period) | PASS (2026-11-05, board 1: 1000→2500, 2500→1000, 1000→10000 Hz, width trigger never fired, control capture did) |
+| 1.6 | Frequency counter: absolute error at 1 kHz (expect within ±1 %, HSI16) | PASS (2026-11-05, board 1: DS1054 counter 1000.00 Hz) |
+| 1.7 | Scope: first edge after `start` (whether the timer toggles at once or after one half period) | PASS (2026-11-05, board 1: first high pulse 500 µs, full half period) |
 
 ## 3. Decisions needed (user)
 
 | # | Question | Options |
 |---|---|---|
-| Q1 | Default pulses per turn and wheel diameter for stage 2 | proposal: 200 ppr, 920 mm |
+| Q1 | Default pulses per turn and wheel diameter for stage 2 | **decided by the user 2026-11-05: 200 ppr, 920 mm** |
 | Q2 | Channels for stage 3 | 2 (A/B quadrature) or 4 (two redundant pairs); 90° or 120° |
 | Q3 | Receiver the emulator must drive | decides the stage 4 output stage (voltage, open drain / push-pull / current loop) |
 | Q4 | Frequency accuracy needed | if better than ±1 %: add a reference crystal (hardware) or calibrate HSI (MSI/LSE trim not possible: no LSE fitted) |
@@ -64,3 +64,12 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   Not verified: waveform, duty cycle and absolute frequency on J8.1 (no scope yet, checks 1.4–1.7).
   Note: the attenuators keep the values the old firmware latched (0 dB here) until the board is
   power-cycled, because this firmware never writes them.
+- 2026-11-05: Manual scope test on board 1 (Rigol DS1054, `docs/MANUAL_TEST.md`), reported by the user:
+  T1 output off after reset: PASS. T2 1 kHz, 50 % duty: PASS. T3 counter 1000.00 Hz: PASS (so the
+  1.5 % low reading of `pulse_test.py` is its timing method, not the board; the script needs a fix).
+  T4 1 Hz – 50 kHz all correct, 50 % duty: PASS. T5 Part A no short pulse on 1000→2500, 2500→1000,
+  1000→10000 Hz, control capture triggered: PASS. T6 first pulse 500 µs: PASS. T7 stop holds high/low,
+  `stop low`: PASS. T8 10 pulses counted, `status` 10: PASS. T9 off after `reset` and after a USB power
+  cycle: PASS. T10 high level 3.3 V with 1 kΩ to GND: PASS.
+  Not reported: T5 Part B by scope (0.05 Hz -> 1 kHz; already checked by `pulse_test.py`), Vmin and
+  unloaded Vmax (T2).
