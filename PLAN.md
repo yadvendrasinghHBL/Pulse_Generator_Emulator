@@ -44,7 +44,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | Stage | Content | Pins | Status |
 |---|---|---|---|
 | 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done: v0.1.0 released 2026-11-05; automatic and scope tests pass on board 1** |
-| 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **done: FW 0.2.0, automatic and scope tests pass on board 1 (2026-11-05); tag v0.2.0 pending** |
+| 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **done: v0.2.0 released 2026-11-05; automatic and scope tests pass on board 1** |
 | 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | open |
 | 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | open |
 | 5 | PC display for the receiver | PC tool | not planned (Q6: console `monitor` only) |
