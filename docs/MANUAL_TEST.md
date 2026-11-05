@@ -1,4 +1,4 @@
-# Manual test: stage 1 (FW 0.1.0), pulse output on J8.1
+# Manual test: stage 1 (J8.1) and stage 2 (A/B on J8.6/J8.7)
 
 This procedure checks by hand what `tools/pulse_test.py` cannot check: the real waveform on the pin
 (voltage, duty cycle, exact frequency, edges). It covers checks 1.4–1.7 in `PLAN.md`.
@@ -216,6 +216,47 @@ A real sensor never produces a pulse shorter than the current speed allows, so t
 | Check | Expected | Measured | Pass? |
 |---|---|---|---|
 | high level with 1 kΩ load | ≥ 3.0 V | | |
+
+---
+
+## 5b. Stage 2 tests (FW 0.2.0): outputs A and B
+
+Connect **CH1 to J8.6 (A)** and **CH2 to J8.7 (B)**, both grounds to **J6 pin 2**. Both channels:
+DC, 1 V/div (10:1 probe). Trigger: edge, rising, **CH1**, 1.6 V. Use 1 V/div and move CH2 down (vertical
+POSITION) so the two traces do not cover each other.
+
+On the Rigol DS1054: **MEASURE → Phase → source CH1, CH2** (shown as "Phase 1→2"; the menu name may
+differ slightly with the firmware version). Also turn on Frequency and Duty for CH1 and CH2.
+
+### T11: 90° phase and direction (PLAN check 2.4)
+
+1. `stop low`, `dir fwd`, `start 1000`. Timebase 200 µs/div.
+2. Read the values in the table. B rises 250 µs (a quarter of 1 ms) after A.
+3. `stop`, `dir rev`, `start 1000`. Now B rises first: A rises 250 µs after B.
+4. `stop`, `dir fwd`.
+
+| Check | Expected | Measured | Pass? |
+|---|---|---|---|
+| Frequency CH1 / CH2 | 1000 Hz ± 1 % both | | |
+| Duty CH1 / CH2 | 50 % (49–51 %) both | | |
+| Forward: B rises after A by | 250 µs (90°) | | |
+| Phase 1→2, forward | 90° (the scope may show −90° or 270°, depending on its sign convention; note it) | | |
+| Reverse: A rises after B by | 250 µs, phase sign opposite to forward | | |
+| `dir rev` while running | `ERR stop first ...` | | |
+
+### T12: Frequency change keeps 90° (PLAN check 2.5)
+
+1. `dir fwd`, `start 1000`, timebase 200 µs/div, trigger **pulse width < 150 µs** on CH1, **Single**.
+2. Arm, then `freq 2500`. Expected: no trigger. Repeat with trigger on **CH2**.
+3. Edge trigger, Auto again, read the phase at 2500 Hz: B still a quarter period (100 µs) after A.
+4. `start 0.05`, wait 3 s, `freq 1000`: A and B at 1 kHz appear at once, still 90° apart.
+
+| Check | Expected | Measured | Pass? |
+|---|---|---|---|
+| 1000 → 2500 Hz, width trigger on A | no trigger | | |
+| 1000 → 2500 Hz, width trigger on B | no trigger | | |
+| Phase at 2500 Hz | 90° (B 100 µs after A) | | |
+| 0.05 → 1000 Hz | A/B at once, 90° | | |
 
 ---
 

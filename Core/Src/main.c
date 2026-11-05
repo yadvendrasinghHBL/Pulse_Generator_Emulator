@@ -1,8 +1,9 @@
 /*
  * Pulse Generator Emulator firmware (Handoff Simulator rev A hardware).
  *
- * Emulates one channel of an axle-mounted optical pulse generator: a 50 %
- * square wave on J8.1 (PA5, TIM2_CH1), set over the USB serial console.
+ * Emulates an axle-mounted optical pulse generator: two 50 % square waves
+ * 90 degrees apart on J8.6/J8.7 (TIM1) plus a single output on J8.1 (PA5,
+ * TIM2_CH1), all set over the USB serial console.
  *
  * Boot sequence: attenuator LE low -> clocks -> LEDs -> console -> POST ->
  * pulse timer (output stays off until `start`) -> command shell.
@@ -13,6 +14,7 @@
 #include "console.h"
 #include "diag.h"
 #include "pulse.h"
+#include "quad.h"
 #include "version.h"
 
 /* Pause before the banner so the boot output can be watched on a terminal */
@@ -21,7 +23,7 @@
 void Error_Handler(void);
 
 /* HSI16 -> PLL (M=1, N=10, R=2) -> 80 MHz SYSCLK, voltage range 1, 4 WS.
- * APB1 = 80 MHz, so the TIM2 clock is 80 MHz (12.5 ns resolution). */
+ * APB1 = APB2 = 80 MHz, so the TIM2 and TIM1 clocks are 80 MHz (12.5 ns). */
 static void clock_init(void)
 {
   RCC_OscInitTypeDef osc = {0};
@@ -106,13 +108,15 @@ int main(void)
   con_init();
   diag_init();
   pulse_init();
+  quad_init();
 
   HAL_Delay(BANNER_DELAY_MS);
   con_printf("\n\nPulse Generator Emulator v%s (%s %s)\n", FW_VERSION, __DATE__, __TIME__);
   diag_print_info();
   int fails = diag_post();
   board_led(LED_ORANGE_PORT, LED_ORANGE_PIN, fails != 0);
-  con_printf("Pulse output %s: off. Type 'start' to begin, 'help' for commands.\n", PULSE1_NAME);
+  con_printf("Outputs %s and %s: off. Type 'start' to begin, 'help' for commands.\n",
+             PULSE1_NAME, QUAD_NAME);
   cli_prompt();
 
   uint32_t last_beat = HAL_GetTick();
@@ -136,6 +140,7 @@ void Error_Handler(void)
 {
   __disable_irq();
   TIM2->CR1 &= ~TIM_CR1_CEN;
+  TIM1->CR1 &= ~TIM_CR1_CEN;
   led_init();
   for (;;) {
     HAL_GPIO_TogglePin(LED_ORANGE_PORT, LED_ORANGE_PIN);

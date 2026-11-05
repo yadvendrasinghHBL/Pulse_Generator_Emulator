@@ -6,6 +6,13 @@ A GitHub release is created from the section of the tagged version.
 
 ## [Unreleased]
 
+### Added
+- Stage 2: two-channel sensor output, A on J8.6 (PB0, TIM1_CH2N) and B on J8.7 (PB1, TIM1_CH3N),
+  50 % duty, exactly 90° apart; frequency changes keep the A/B order without short pulses.
+- Command `dir fwd|rev` (only while stopped); `status`/`freq`/`stop` show A/B state, levels, actual
+  frequency and pulse count; `freq`, `start`, `stop` drive J8.1 and A/B together.
+- `pulse_test.py`: A/B rate, `dir`, A/B edge order in both directions.
+
 ## [0.1.0] - 2026-11-05
 
 ### Added

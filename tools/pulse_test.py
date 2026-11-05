@@ -35,9 +35,19 @@ class Board:
         lines = read_reply(self.port).split("\n")[1:]   # first line is the echo
         return "\n".join(ln for ln in lines if ln.strip() not in (">", ""))
 
+    def counts(self):
+        """(J8.1 pulses, A/B pulses) from one `status`; None where missing."""
+        st = self.cmd("status")
+        m = re.search(r"^pulses (\d+) since start", st, re.M)
+        q = re.search(r"^A/B pulses (\d+) since start", st, re.M)
+        return (int(m.group(1)) if m else None), (int(q.group(1)) if q else None)
+
     def pulses(self):
-        m = re.search(r"^pulses (\d+) since start", self.cmd("status"), re.M)
-        return int(m.group(1)) if m else None
+        return self.counts()[0]
+
+    def levels_ab(self):
+        m = re.search(r"levels A (high|low), B (high|low)", self.cmd("status"))
+        return (m.group(1) == "high", m.group(2) == "high") if m else None
 
 
 results = []
@@ -53,18 +63,38 @@ def rate_check(b, hz, seconds):
     # (until the prompt or a quiet gap) is not part of the counting window. v0.1.0 timed the
     # whole exchange and read about 1.5 % low while a counter on J8.1 showed 1000.00 Hz.
     b.cmd(f"start {hz}")
-    n0 = b.pulses()
+    c0 = b.counts()
     t0 = b.sent_at
     time.sleep(seconds)
-    n1 = b.pulses()
-    t1 = b.sent_at
-    dt = t1 - t0
-    if n0 is None or n1 is None:
-        check(False, f"pulse rate at {hz} Hz", "no pulse count in status")
-        return
-    rate = (n1 - n0) / dt
-    check(abs(rate - hz) <= hz * RATE_TOL, f"pulse rate at {hz} Hz",
-          f"{n1 - n0} pulses in {dt:.2f} s = {rate:.1f} Hz (tolerance {RATE_TOL:.0%})")
+    c1 = b.counts()
+    dt = b.sent_at - t0
+    for i, name in ((0, "J8.1"), (1, "A/B")):
+        if c0[i] is None or c1[i] is None:
+            check(False, f"{name} pulse rate at {hz} Hz", "no pulse count in status")
+            continue
+        n = c1[i] - c0[i]
+        rate = n / dt
+        check(abs(rate - hz) <= hz * RATE_TOL, f"{name} pulse rate at {hz} Hz",
+              f"{n} pulses in {dt:.2f} s = {rate:.1f} Hz (tolerance {RATE_TOL:.0%})")
+
+
+def sequence_check(b, direction):
+    """At 0.5 Hz the A/B edges are 0.5 s apart, at 0.25, 0.75, 1.25, 1.75 s after `start`
+    (first edge a quarter of a half period after start). Sample between them and check the
+    order. Forward: A rises first, then B, then A falls (B 90 deg behind A). Reverse: B first."""
+    want = [(1, 0), (1, 1), (0, 1)] if direction == "fwd" else [(0, 1), (1, 1), (1, 0)]
+    b.cmd(f"dir {direction}")
+    b.cmd("start 0.5")
+    t0 = b.sent_at
+    got = []
+    for at in (0.5, 1.0, 1.5):              # halfway between two edges
+        time.sleep(max(0.0, t0 + at - time.monotonic()))
+        lv = b.levels_ab()
+        got.append(None if lv is None else (int(lv[0]), int(lv[1])))
+    b.cmd("stop low")
+    fmt = lambda seq: " -> ".join("?" if x is None else f"A{x[0]}B{x[1]}" for x in seq)
+    check(got == want, f"A/B order, dir {direction} at 0.5 Hz",
+          f"{fmt(got)} (expected {fmt(want)})")
 
 
 def main():
@@ -103,17 +133,27 @@ def main():
         rate_check(b, 1000, 3.0)
         rate_check(b, 10000, 3.0)
 
+        check(b.cmd("dir rev").startswith("ERR"), "dir change rejected while running")
+        check(b.cmd("dir up").startswith("ERR"), "dir up rejected")
+
         # frequency change while running, from a very slow to a fast setting
         b.cmd("start 0.05")
         time.sleep(0.5)
         b.cmd("freq 1000")
         time.sleep(0.2)
-        n0 = b.pulses()
+        c0 = b.counts()
         time.sleep(1.0)
-        n1 = b.pulses()
-        check(n0 is not None and n1 is not None and n1 - n0 > 800,
-              "0.05 Hz -> 1000 Hz applies at once (no wait for the 10 s half period)",
-              f"{(n1 or 0) - (n0 or 0)} pulses in about 1 s")
+        c1 = b.counts()
+        for i, name in ((0, "J8.1"), (1, "A/B")):
+            ok = None not in (c0[i], c1[i]) and c1[i] - c0[i] > 800
+            check(ok, f"{name}: 0.05 Hz -> 1000 Hz applies at once (no wait for the 10 s half period)",
+                  f"{(c1[i] or 0) - (c0[i] or 0)} pulses in about 1 s")
+
+        b.cmd("stop low")
+        sequence_check(b, "fwd")
+        sequence_check(b, "rev")
+        b.cmd("dir fwd")
+        b.cmd("start 100")
 
         r = b.cmd("stop")
         check("stopped" in r, "stop holds the level", r)
@@ -122,7 +162,7 @@ def main():
         check(n0 is not None and b.pulses() == n0, "no pulses while stopped")
 
         r = b.cmd("stop low")
-        check("level low" in r, "stop low forces the output low", r)
+        check("level low" in r and "levels A low, B low" in r, "stop low forces all outputs low", r)
 
     failed = results.count(False)
     print(f"\n{'ALL CHECKS PASSED' if not failed else f'FAILED: {failed} of {len(results)} checks'}"

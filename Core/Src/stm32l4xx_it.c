@@ -2,6 +2,7 @@
 #include "board.h"
 #include "console.h"
 #include "pulse.h"
+#include "quad.h"
 
 void NMI_Handler(void)
 {
@@ -16,6 +17,7 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   TIM2->CR1 &= ~TIM_CR1_CEN;
+  TIM1->CR1 &= ~TIM_CR1_CEN;
   HAL_GPIO_WritePin(LED_GREEN_PORT, LED_GREEN_PIN, GPIO_PIN_RESET);
   HAL_GPIO_WritePin(LED_ORANGE_PORT, LED_ORANGE_PIN, GPIO_PIN_SET);
   for (;;) {
@@ -57,6 +59,11 @@ void SysTick_Handler(void)
 void TIM2_IRQHandler(void)
 {
   pulse_irq_handler();
+}
+
+void TIM1_CC_IRQHandler(void)
+{
+  quad_irq_handler();
 }
 
 void USART1_IRQHandler(void)

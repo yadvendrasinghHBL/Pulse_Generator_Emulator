@@ -44,10 +44,10 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | Stage | Content | Pins | Status |
 |---|---|---|---|
 | 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done: v0.1.0 released 2026-11-05; automatic and scope tests pass on board 1** |
-| 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | open |
+| 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **FW 0.2.0: automatic tests pass on board 1; scope checks open** |
 | 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | open |
 | 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | open |
-| 5 | PC display for the receiver (optional): live speed/distance/phase view and log file from the `monitor` output | PC tool | open |
+| 5 | PC display for the receiver | PC tool | not planned (Q6: console `monitor` only) |
 | 6 | Interface hardware (add-on board): isolated open-drain outputs (opto + MOSFET) and isolated, level-shifting inputs for a real 10–30 V OPG; ground from J6.2 | add-on board | open |
 
 ### Stage 1 checks (bench)
@@ -62,6 +62,16 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | 1.6 | Frequency counter: absolute error at 1 kHz (expect within ±1 %, HSI16) | PASS (2026-11-05, board 1: DS1054 counter 1000.00 Hz) |
 | 1.7 | Scope: first edge after `start` (whether the timer toggles at once or after one half period) | PASS (2026-11-05, board 1: first high pulse 500 µs, full half period) |
 
+### Stage 2 checks (bench)
+
+| # | Check | Result |
+|---|---|---|
+| 2.1 | `tools/build_all.sh`: debug + release, 0 warnings | PASS (2026-11-05) |
+| 2.2 | Flash, POST, `status` FW 0.2.0, all outputs off at boot | PASS (2026-11-05, board 1, UART bootloader) |
+| 2.3 | `tools/pulse_test.py`: ALL CHECKS PASSED (A/B rate, `dir`, A/B order both directions) | PASS (2026-11-05, board 1, 26/26) |
+| 2.4 | Scope CH1 J8.6, CH2 J8.7: both 50 %, B 90° behind A (forward), ahead (reverse) | open (`docs/MANUAL_TEST.md` T11) |
+| 2.5 | Scope: frequency change while running keeps 90°, no short pulse on A or B | open (T12) |
+
 ## 3. Decisions needed (user)
 
 | # | Question | Options |
@@ -69,9 +79,9 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | Q1 | Default pulses per turn and wheel diameter for stage 2 | **decided by the user 2026-11-05: 200 ppr, 920 mm** |
 | Q2 | Channels | **decided by the user 2026-11-05: 2 outputs, 90° apart, plus 2 inputs as receiver** |
 | Q3 | Real equipment the board must connect to (receiver for the outputs, real OPG for the inputs) | decides the stage 6 hardware (voltage, open drain / push-pull / current loop) |
-| Q5 | Stage order: speed model (3) before receiver (4), or receiver first (it can then check stages 2–3 without a scope) | 2 → 3 → 4 (as listed) or 2 → 4 → 3 |
-| Q6 | Receiver display | console `monitor` only, or also the PC display (stage 5) |
-| Q7 | Receiver fault limits | phase tolerance (e.g. 90° ± 20°, OPG spec: duty 40–60 %), standstill timeout (e.g. 2 s) |
+| Q5 | Stage order | **decided by the user 2026-11-05: 2 → 4 → 3** (receiver before the speed model, so the receiver can check it) |
+| Q6 | Receiver display | **decided by the user 2026-11-05: console `monitor` only** (stage 5 dropped for now) |
+| Q7 | Receiver fault limits | **decided by the user 2026-11-05: phase 90° ± 20° (70°–110° OK), standstill after 2 s without an edge** |
 | Q4 | Frequency accuracy needed | if better than ±1 %: add a reference crystal (hardware) or calibrate HSI (MSI/LSE trim not possible: no LSE fitted) |
 
 ## 4. Risks
@@ -116,3 +126,14 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 - 2026-11-05: `tools/pulse_test.py` rate check now times the window between the two `status` samples
   (when each command reached the board), not around the replies. Board 1: 100.2 / 1001.0 / 10004.4 Hz
   at 100 / 1000 / 10000 Hz (was about 1.5 % low); tolerance tightened from 5 % to 2 %. ALL CHECKS PASSED.
+- 2026-11-05: Decisions (user): stage order 2 → 4 → 3, console `monitor` only (stage 5 dropped for now),
+  receiver limits 90° ± 20° and 2 s standstill.
+- 2026-11-05: Stage 2 firmware 0.2.0: `quad.c`, TIM1 toggle mode on CH2N/CH3N (PB0/PB1), compare points
+  N/4 and 3N/4, prescaler chosen per frequency (16-bit timer); frequency change while running restarts
+  the counter at the position that keeps the edge sequence; `dir fwd|rev` while stopped. Board 1:
+  SWD flash failed ("No STM32 target found", ST-LINK 3.23 V seen; probably J6 cable not on the board),
+  flashed over the UART bootloader instead. `pulse_test.py` ALL CHECKS PASSED (26/26): A/B rate
+  100.2 / 1000.6 / 10005.5 Hz; 0.05 Hz -> 1 kHz at once; edge order at 0.5 Hz forward
+  A1B0 -> A1B1 -> A0B1, reverse A0B1 -> A1B1 -> A1B0. First run failed 2 checks because the test sampled
+  on the edges (first edge is 1/8 period after `start`, not 1/4); test fixed, firmware unchanged.
+  Not verified: 90° and waveform on the scope (checks 2.4, 2.5).

@@ -5,8 +5,9 @@
 Firmware that turns the Handoff Simulator rev A board (STM32L451RCT6, FT231X USB-UART) into an emulator of an
 axle-mounted **optical pulse generator**, the speed sensor of a rail vehicle. Only expansion header **J8** is used.
 
-**Stage 1 (v0.1.0):** a 50 % square wave on **J8.1 (PA5)**, 0.01 Hz – 50 kHz, set from a serial terminal.
-Speed model, multi-channel/direction and an output stage follow ([`PLAN.md`](PLAN.md)).
+**Stage 2 (0.2.0, in test):** two 50 % square waves **90° apart**, A on **J8.6 (PB0)** and B on **J8.7 (PB1)**,
+with direction (`dir fwd|rev`), plus the stage 1 single output on **J8.1 (PA5)**; 0.01 Hz – 50 kHz, set from a
+serial terminal. A receiver on J8.2/J8.3, a speed model and interface hardware follow ([`PLAN.md`](PLAN.md)).
 
 ## Quick start
 
@@ -16,7 +17,7 @@ tools/build_and_flash.sh                             # clean build, artifacts/, 
 picocom -b 115200 --lower-dtr /dev/ttyUSB0           # then: start 1000   (exit: Ctrl+A, Ctrl+X)
 ```
 
-Scope on **J8.1**, ground on **J6 pin 2** (J8 has no GND pin). Output is 3.3 V logic.
+Scope on **J8.1**, **J8.6**, **J8.7**, ground on **J6 pin 2** (J8 has no GND pin). Output is 3.3 V logic.
 
 **Always open the serial port with DTR off** (`--lower-dtr`, pyserial `dtr=False`): on rev A boards DTR on
 holds the MCU in reset (`docs/HARDWARE.md` finding 3). All project tools do this.

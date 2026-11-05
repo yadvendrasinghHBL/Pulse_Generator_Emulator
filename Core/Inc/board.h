@@ -37,6 +37,17 @@
 #define PULSE1_NAME         "J8.1 (PA5, TIM2_CH1)"
 
 /*
+ * Sensor outputs A/B (stage 2): J8.6 = PB0 (U1 pin 26), TIM1_CH2N on AF1;
+ * J8.7 = PB1 (U1 pin 27), TIM1_CH3N on AF1 (STM32CubeMX pin database,
+ * GPIO-STM32L45x). One timer for both keeps them exactly 90 degrees apart.
+ */
+#define QUAD_PORT           GPIOB
+#define QUAD_A_PIN          GPIO_PIN_0
+#define QUAD_B_PIN          GPIO_PIN_1
+#define QUAD_AF             GPIO_AF1_TIM1
+#define QUAD_NAME           "A J8.6 (PB0) / B J8.7 (PB1), TIM1"
+
+/*
  * Attenuator latch: the eight QPC6713 attenuators of the Handoff Simulator are
  * still on the board. This firmware does not use them, but their LE line (PB6,
  * U1 pin 58) has no pull-down and must not float (docs/HARDWARE.md finding 4).

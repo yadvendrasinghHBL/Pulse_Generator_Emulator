@@ -55,8 +55,8 @@ PB3/PB5 (attenuator CLK/SI) and all other GPIOs are left in their reset (analog)
 | 3 | 23 | PA7 | TIM3_CH2 (AF2); TIM1_CH1N (AF1) | receiver input B (planned, stage 4) |
 | 4 | 24 | PC4 | (none) | unused |
 | 5 | 25 | PC5 | (none) | unused |
-| 6 | 26 | PB0 | TIM1_CH2N (AF1); TIM3_CH3 (AF2) | sensor output A (planned, stage 2) |
-| 7 | 27 | PB1 | TIM1_CH3N (AF1); TIM3_CH4 (AF2) | sensor output B (planned, stage 2) |
+| 6 | 26 | PB0 | TIM1_CH2N (AF1); TIM3_CH3 (AF2) | **sensor output A** (TIM1_CH2N, stage 2) |
+| 7 | 27 | PB1 | TIM1_CH3N (AF1); TIM3_CH4 (AF2) | **sensor output B** (TIM1_CH3N, stage 2) |
 | 8 | 28 | PB2 | (none) | unused |
 
 Timer/AF columns are from the STM32L451 datasheet (DS11912) alternate-function table.

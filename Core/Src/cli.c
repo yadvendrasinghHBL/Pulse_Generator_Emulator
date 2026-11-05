@@ -12,6 +12,7 @@
 #include "console.h"
 #include "diag.h"
 #include "pulse.h"
+#include "quad.h"
 #include "version.h"
 
 #include <stdlib.h>
@@ -80,6 +81,18 @@ static void print_freq_line(void)
   con_puts(" (actual ");
   print_hz(pulse_actual_mhz());
   con_printf(", half period %lu ticks at 80 MHz)\n", pulse_half_period_ticks());
+  con_puts("A/B actual ");
+  print_hz(quad_actual_mhz());
+  con_printf(" (half period %lu x %lu ticks at 80 MHz)\n", quad_counter_period(), quad_prescaler());
+}
+
+/* Apply a frequency to all outputs; both modules accept the same range */
+static int set_all_mhz(uint32_t mhz)
+{
+  if (pulse_set_mhz(mhz)) {
+    return -1;
+  }
+  return quad_set_mhz(mhz);
 }
 
 static const char *state_name(pulse_state_t s)
@@ -94,15 +107,39 @@ static const char *state_name(pulse_state_t s)
   }
 }
 
+static const char *level_name(int lvl)
+{
+  return lvl ? "high" : "low";
+}
+
 static void print_output_line(void)
 {
   int lvl = pulse_level();
+  int a = quad_level_a();
 
   con_printf("output %s: %s", PULSE1_NAME, state_name(pulse_state()));
   if (lvl < 0) {
     con_puts(", pin not driven\n");
   } else {
-    con_printf(", level %s\n", lvl ? "high" : "low");
+    con_printf(", level %s\n", level_name(lvl));
+  }
+  con_printf("outputs %s: %s, %s", QUAD_NAME, state_name(quad_state()),
+             quad_dir() == QUAD_FWD ? "forward (A leads B by 90 deg)" : "reverse (B leads A by 90 deg)");
+  if (a < 0) {
+    con_puts(", pins not driven\n");
+  } else {
+    con_printf(", levels A %s, B %s\n", level_name(a), level_name(quad_level_b()));
+  }
+}
+
+static void print_count(const char *label, uint64_t n)
+{
+  /* newlib-nano printf has no %llu: print as two 32-bit halves when needed */
+  if (n <= 0xFFFFFFFFULL) {
+    con_printf("%spulses %lu since start\n", label, (uint32_t)n);
+  } else {
+    con_printf("%spulses %lu x 10^9 + %lu since start\n", label,
+               (uint32_t)(n / 1000000000ULL), (uint32_t)(n % 1000000000ULL));
   }
 }
 
@@ -112,8 +149,6 @@ static void cmd_status(int argc, char **argv)
   int post = diag_post_result();
   uint32_t vdda = 0;
   int32_t temp = 0;
-  uint64_t n = pulse_count();
-
   con_get_stats(&st);
   con_printf("FW %s, up %lu s, POST %s, UART RX errors %lu\n", FW_VERSION,
              HAL_GetTick() / 1000U,
@@ -121,13 +156,8 @@ static void cmd_status(int argc, char **argv)
              st.rx_drops + st.ore + st.fe + st.ne);
   print_output_line();
   print_freq_line();
-  /* newlib-nano printf has no %llu: print as two 32-bit halves when needed */
-  if (n <= 0xFFFFFFFFULL) {
-    con_printf("pulses %lu since start\n", (uint32_t)n);
-  } else {
-    con_printf("pulses %lu x 10^9 + %lu since start\n",
-               (uint32_t)(n / 1000000000ULL), (uint32_t)(n % 1000000000ULL));
-  }
+  print_count("", pulse_count());
+  print_count("A/B ", quad_count());
   if (diag_measure(&vdda, &temp) == 0) {
     con_printf("VDDA %lu mV, temperature %ld C\n", vdda, temp);
   } else {
@@ -147,7 +177,7 @@ static void cmd_freq(int argc, char **argv)
     con_puts("ERR usage: freq | freq <Hz 0.01..50000>\n");
     return;
   }
-  if (parse_mhz(argv[1], &mhz) || pulse_set_mhz(mhz)) {
+  if (parse_mhz(argv[1], &mhz) || set_all_mhz(mhz)) {
     freq_range_error();
     return;
   }
@@ -163,11 +193,13 @@ static void cmd_start(int argc, char **argv)
     con_puts("ERR usage: start | start <Hz 0.01..50000>\n");
     return;
   }
-  if (argc == 2 && (parse_mhz(argv[1], &mhz) || pulse_set_mhz(mhz))) {
+  if (argc == 2 && (parse_mhz(argv[1], &mhz) || set_all_mhz(mhz))) {
     freq_range_error();
     return;
   }
+  /* back to back, so J8.1 and A start within a few microseconds (not phase locked) */
   pulse_start();
+  quad_start();
   con_puts("OK ");
   print_output_line();
   print_freq_line();
@@ -182,6 +214,28 @@ static void cmd_stop(int argc, char **argv)
     return;
   }
   pulse_stop(force_low);
+  quad_stop(force_low);
+  con_puts("OK ");
+  print_output_line();
+}
+
+static void cmd_dir(int argc, char **argv)
+{
+  int fwd = argc == 2 && strcmp(argv[1], "fwd") == 0;
+  int rev = argc == 2 && strcmp(argv[1], "rev") == 0;
+
+  if (argc == 1) {
+    con_printf("dir %s\n", quad_dir() == QUAD_FWD ? "fwd" : "rev");
+    return;
+  }
+  if (!fwd && !rev) {
+    con_puts("ERR usage: dir | dir fwd | dir rev\n");
+    return;
+  }
+  if (quad_set_dir(fwd ? QUAD_FWD : QUAD_REV)) {
+    con_puts("ERR stop first: a wheel changes direction only at standstill\n");
+    return;
+  }
   con_puts("OK ");
   print_output_line();
 }
@@ -245,6 +299,7 @@ static void cmd_bootloader(int argc, char **argv)
   const uint32_t sysmem = 0x1FFF0000U;
 
   pulse_stop(0);
+  quad_stop(0);
   con_puts("jumping to system bootloader on USART1\n");
   HAL_Delay(10);
 
@@ -273,10 +328,11 @@ static void cmd_bootloader(int argc, char **argv)
 static const cli_cmd_t commands[] = {
   /* User commands (`help`) */
   { "help",       "help | help all: list commands",                      cmd_help,       0 },
-  { "status",     "output state, frequency, pulse count, POST, VDDA",    cmd_status,     0 },
+  { "status",     "outputs, frequency, pulse counts, POST, VDDA",        cmd_status,     0 },
   { "freq",       "freq | freq <Hz>: show / set frequency, 0.01..50000 Hz", cmd_freq,    0 },
-  { "start",      "start | start <Hz>: pulses on J8.1 (PA5)",            cmd_start,      0 },
-  { "stop",       "stop | stop low: stop, hold the level or force low",  cmd_stop,       0 },
+  { "start",      "start | start <Hz>: J8.1 and A/B (J8.6, J8.7)",       cmd_start,      0 },
+  { "stop",       "stop | stop low: stop, hold the levels or force low", cmd_stop,       0 },
+  { "dir",        "dir | dir fwd | dir rev: which channel leads (stopped)", cmd_dir,     0 },
   { "reset",      "software reset (output off until the next start)",    cmd_reset,      0 },
   /* Engineering commands (`help all`): bring-up, service, firmware update */
   { "info",       "chip ID, flash, UID, clocks, option bytes, reset",    cmd_info,       1 },
