@@ -21,7 +21,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from con_send import open_port, port_users, read_reply, wait_for_prompt  # noqa: E402
 
-RATE_TOL = 0.05     # pulse count vs host clock; serial latency is the main error
+RATE_TOL = 0.02     # pulse count vs host clock: HSI16 (+/-1 %) plus USB timing jitter
 
 
 class Board:
@@ -30,6 +30,8 @@ class Board:
 
     def cmd(self, line):
         self.port.write(line.encode() + b"\r")
+        self.port.flush()                               # wait until the bytes have left the PC
+        self.sent_at = time.monotonic()                 # the board acts on the line about now
         lines = read_reply(self.port).split("\n")[1:]   # first line is the echo
         return "\n".join(ln for ln in lines if ln.strip() not in (">", ""))
 
@@ -47,12 +49,16 @@ def check(ok, what, detail=""):
 
 
 def rate_check(b, hz, seconds):
+    # Time between the two samples, not around the two `status` round trips: the reply wait
+    # (until the prompt or a quiet gap) is not part of the counting window. v0.1.0 timed the
+    # whole exchange and read about 1.5 % low while a counter on J8.1 showed 1000.00 Hz.
     b.cmd(f"start {hz}")
-    t0 = time.monotonic()
     n0 = b.pulses()
+    t0 = b.sent_at
     time.sleep(seconds)
     n1 = b.pulses()
-    dt = time.monotonic() - t0
+    t1 = b.sent_at
+    dt = t1 - t0
     if n0 is None or n1 is None:
         check(False, f"pulse rate at {hz} Hz", "no pulse count in status")
         return
