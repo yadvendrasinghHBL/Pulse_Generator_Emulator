@@ -6,6 +6,35 @@ Emulate an axle-mounted **optical pulse generator** (OPG, e.g. HaslerRail Optica
 datasheet 5.0301.035-04TEN) with the **Handoff Simulator rev A** board, using only expansion header **J8**.
 The attenuator section of the board is not used.
 
+The board has two roles at the same time (decided by the user 2026-11-05):
+
+- **Sensor (emulator):** two output channels A and B, 50 % square waves, **90° apart**, like the OPG.
+  The leading channel gives the direction.
+- **Receiver (processing unit):** two input channels that measure the A/B signals and show all speed
+  parameters: frequency per channel, phase A–B, direction, speed, distance, acceleration, pulse count,
+  and faults (channel missing, phase outside 90° ± tolerance).
+
+With J8.6 → J8.2 and J8.7 → J8.3 wired together, one board tests itself (loopback). A second board can
+act as the receiver for the first, and the receiver can later measure a real OPG (needs the input stage, stage 6).
+
+### Pin and timer plan (J8)
+
+| J8 | Pin | Timer channel (AF) | Role |
+|---:|-----|--------------------|------|
+| 1 | PA5 | TIM2_CH1 (AF1), 32-bit | single output (stage 1, kept) |
+| 2 | PA6 | TIM3_CH1 (AF2) | **input A** (input capture, both edges) |
+| 3 | PA7 | TIM3_CH2 (AF2) | **input B** (input capture, both edges) |
+| 6 | PB0 | TIM1_CH2N (AF1) | **output A** (toggle mode) |
+| 7 | PB1 | TIM1_CH3N (AF1) | **output B** (toggle mode, compare point a quarter period after A) |
+
+Why this split: both outputs come from **one** timer (TIM1), so the 90° phase is exact and stays exact
+when the frequency changes; the direction is changed by swapping the two compare points. Both inputs go to
+**another** timer (TIM3) that runs freely, so the output frequency never disturbs the measurement.
+TIM3 on PB0/PB1 (the earlier plan) would put outputs and inputs on the same counter.
+AF numbers are from the STM32CubeMX pin database for STM32L451RCTx (GPIO-STM32L45x); confirm against
+DS11912 table 17 before coding. TIM1 is an advanced timer: the CHxN outputs need BDTR.MOE set.
+All J8 pins are 3.3 V logic: **never connect a real OPG (10–30 V outputs) directly** to the inputs.
+
 Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 1–6 isolated channels,
 90° or 120° phase shift, 1–200 pulses per turn (400 on request), 1 or 2 code tracks, up to 3/6/10 kHz
 (40 kHz special), outputs 0–30 V push-pull / open drain / 7–16 mA current, supply 10–30 V.
@@ -15,9 +44,11 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | Stage | Content | Pins | Status |
 |---|---|---|---|
 | 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done; automatic and scope tests pass on board 1 (2026-11-05); tag v0.1.0 pending** |
-| 2 | Speed model: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.1 | open |
-| 3 | 2 or 4 phase-shifted channels (90°/120°) on TIM3, `dir fwd/rev`; optional second code track on PA5 | J8.2/.3/.6/.7 (PA6, PA7, PB0, PB1) | open |
-| 4 | Output stage hardware: isolated open-drain per channel (opto + MOSFET), receiver supplies the pull-up; ground from J6.2 | add-on board | open |
+| 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | open |
+| 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | open |
+| 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | open |
+| 5 | PC display for the receiver (optional): live speed/distance/phase view and log file from the `monitor` output | PC tool | open |
+| 6 | Interface hardware (add-on board): isolated open-drain outputs (opto + MOSFET) and isolated, level-shifting inputs for a real 10–30 V OPG; ground from J6.2 | add-on board | open |
 
 ### Stage 1 checks (bench)
 
@@ -36,8 +67,11 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | # | Question | Options |
 |---|---|---|
 | Q1 | Default pulses per turn and wheel diameter for stage 2 | **decided by the user 2026-11-05: 200 ppr, 920 mm** |
-| Q2 | Channels for stage 3 | 2 (A/B quadrature) or 4 (two redundant pairs); 90° or 120° |
-| Q3 | Receiver the emulator must drive | decides the stage 4 output stage (voltage, open drain / push-pull / current loop) |
+| Q2 | Channels | **decided by the user 2026-11-05: 2 outputs, 90° apart, plus 2 inputs as receiver** |
+| Q3 | Real equipment the board must connect to (receiver for the outputs, real OPG for the inputs) | decides the stage 6 hardware (voltage, open drain / push-pull / current loop) |
+| Q5 | Stage order: speed model (3) before receiver (4), or receiver first (it can then check stages 2–3 without a scope) | 2 → 3 → 4 (as listed) or 2 → 4 → 3 |
+| Q6 | Receiver display | console `monitor` only, or also the PC display (stage 5) |
+| Q7 | Receiver fault limits | phase tolerance (e.g. 90° ± 20°, OPG spec: duty 40–60 %), standstill timeout (e.g. 2 s) |
 | Q4 | Frequency accuracy needed | if better than ±1 %: add a reference crystal (hardware) or calibrate HSI (MSI/LSE trim not possible: no LSE fitted) |
 
 ## 4. Risks
@@ -48,6 +82,9 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | R2 | HSI16 accuracy (±1 %) | state it in reports; Q4 |
 | R3 | 3.3 V outputs connected straight to a 24 V receiver | USER_MANUAL warning; stage 4 output stage |
 | R4 | BOOT0 / DTR issues of rev A (HARDWARE.md findings 2, 3) | DTR off in all tools; option-byte fix on each board |
+| R5 | Inputs connected to a real 10–30 V OPG | USER_MANUAL warning; stage 6 input stage |
+| R6 | Receiver on the same clock as the emulator (loopback) cannot see clock errors | loopback proves the logic; absolute accuracy against the scope counter or a second board (HSI16 ±1 %) |
+| R7 | Interrupt load: 2 inputs × 2 edges at 10 kHz = 40 000 captures/s | TIM3 capture with DMA or a short ISR; measure CPU load in stage 4 |
 
 ## 5. Log
 
@@ -73,3 +110,6 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   cycle: PASS. T10 high level 3.3 V with 1 kΩ to GND: PASS.
   Not reported: T5 Part B by scope (0.05 Hz -> 1 kHz; already checked by `pulse_test.py`), Vmin and
   unloaded Vmax (T2).
+- 2026-11-05: Plan changed (user): two-channel 90° sensor output plus a two-channel receiver that shows
+  all speed parameters. New stages 2–6, pin plan TIM1_CH2N/CH3N (PB0/PB1) for outputs and
+  TIM3_CH1/CH2 (PA6/PA7) for inputs; Q2 decided, Q5–Q7 added. Stage 1 unchanged.

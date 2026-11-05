@@ -13,7 +13,7 @@ schematic change and diff against this file and `Core/Inc/board.h`.
 ```
 USB-A J7 ─ USB6B1 ESD (U2) ─┬─ FT231XS USB-UART (U4) ── USART1 ── STM32L451RCT6 (U1) ── J8 (1x8 header)
                             │     DTR# ─D1▶─ NRST          │           PA5  → J8.1  pulse output 1 (TIM2_CH1)
-                            │     RTS# ─D2▶─ BOOT0 (R2 10k↓)│           PA6/PA7/PB0/PB1 → J8.2/.3/.6/.7 (TIM3, stage 3)
+                            │     RTS# ─D2▶─ BOOT0 (R2 10k↓)│           PB0/PB1 → J8.6/.7 outputs A/B (TIM1); PA6/PA7 → J8.2/.3 inputs A/B (TIM3)
                             └─ LDO40LPU33 (U3) → Vdrive 3.3 V (MCU, FT231X VCCIO, attenuators)
 
 QPC6713 attenuators IC2..IC9: not used. Their LE (PB6) is driven low and kept low (finding 4).
@@ -51,12 +51,12 @@ PB3/PB5 (attenuator CLK/SI) and all other GPIOs are left in their reset (analog)
 | J8 pin | MCU pin | Port | Timer channel (AF) | Use |
 |-------:|--------:|------|--------------------|-----|
 | 1 | 21 | PA5 | TIM2_CH1 (AF1), 32-bit timer | **pulse output 1 (stage 1)** |
-| 2 | 22 | PA6 | TIM3_CH1 (AF2) | stage 3: channel A |
-| 3 | 23 | PA7 | TIM3_CH2 (AF2) | stage 3: channel B |
+| 2 | 22 | PA6 | TIM3_CH1 (AF2) | receiver input A (planned, stage 4) |
+| 3 | 23 | PA7 | TIM3_CH2 (AF2); TIM1_CH1N (AF1) | receiver input B (planned, stage 4) |
 | 4 | 24 | PC4 | (none) | unused |
 | 5 | 25 | PC5 | (none) | unused |
-| 6 | 26 | PB0 | TIM3_CH3 (AF2) | stage 3: channel C |
-| 7 | 27 | PB1 | TIM3_CH4 (AF2) | stage 3: channel D |
+| 6 | 26 | PB0 | TIM1_CH2N (AF1); TIM3_CH3 (AF2) | sensor output A (planned, stage 2) |
+| 7 | 27 | PB1 | TIM1_CH3N (AF1); TIM3_CH4 (AF2) | sensor output B (planned, stage 2) |
 | 8 | 28 | PB2 | (none) | unused |
 
 Timer/AF columns are from the STM32L451 datasheet (DS11912) alternate-function table.
