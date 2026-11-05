@@ -258,6 +258,29 @@ differ slightly with the firmware version). Also turn on Frequency and Duty for 
 | Phase at 2500 Hz | 90° (B 100 µs after A) | | |
 | 0.05 → 1000 Hz | A/B at once, 90° | | |
 
+## 5c. Stage 4 tests (FW 0.3.0): receiver
+
+Fit the loopback wires **J8.6 → J8.2** and **J8.7 → J8.3**. `tools/pulse_test.py` checks the values; these
+tests check what only a person can do: watch it live and break a channel.
+
+### T13: Live view and fault detection (PLAN check 4.4)
+
+1. `dir fwd`, `start 1922.3`, then `monitor`. Expected: about `100.00` km/h, `90.0 fwd`, `OK`, distance rising.
+2. Press Enter, type `freq 961.2`, then `monitor` again. Expected: about `50.00` km/h. Press Enter.
+3. With `monitor` running, **pull the J8.7 wire** (B). Within 2.5 s: `FAULT B missing`. Put it back: `OK`.
+4. Pull the J8.6 wire (A): `FAULT A missing`. Put it back: `OK`.
+5. Press Enter, `stop`, `monitor`. Within 2.5 s: speed `0.00`, `standstill`. Press Enter.
+6. `stop`, `dir rev`, `start 1922.3`, `monitor`: `270.0 rev`, `OK`, distance falling. Press Enter, `stop low`, `dir fwd`.
+
+| Check | Expected | Measured | Pass? |
+|---|---|---|---|
+| 1922.3 Hz | 100.00 km/h, 90.0 fwd, OK | | |
+| 961.2 Hz | 50.00 km/h | | |
+| B wire pulled | FAULT B missing, OK again when back | | |
+| A wire pulled | FAULT A missing, OK again when back | | |
+| stop | standstill within 2.5 s | | |
+| reverse | 270.0 rev, distance falling | | |
+
 ---
 
 ## 6. Finish

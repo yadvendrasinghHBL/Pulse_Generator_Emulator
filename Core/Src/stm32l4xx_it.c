@@ -3,6 +3,7 @@
 #include "console.h"
 #include "pulse.h"
 #include "quad.h"
+#include "rx.h"
 
 void NMI_Handler(void)
 {
@@ -64,6 +65,11 @@ void TIM2_IRQHandler(void)
 void TIM1_CC_IRQHandler(void)
 {
   quad_irq_handler();
+}
+
+void TIM3_IRQHandler(void)
+{
+  rx_irq_handler();
 }
 
 void USART1_IRQHandler(void)

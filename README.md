@@ -5,9 +5,10 @@
 Firmware that turns the Handoff Simulator rev A board (STM32L451RCT6, FT231X USB-UART) into an emulator of an
 axle-mounted **optical pulse generator**, the speed sensor of a rail vehicle. Only expansion header **J8** is used.
 
-**Stage 2 (0.2.0, in test):** two 50 % square waves **90° apart**, A on **J8.6 (PB0)** and B on **J8.7 (PB1)**,
-with direction (`dir fwd|rev`), plus the stage 1 single output on **J8.1 (PA5)**; 0.01 Hz – 50 kHz, set from a
-serial terminal. A receiver on J8.2/J8.3, a speed model and interface hardware follow ([`PLAN.md`](PLAN.md)).
+**Sensor (v0.2.0):** two 50 % square waves **90° apart**, A on **J8.6 (PB0)** and B on **J8.7 (PB1)**, with
+direction (`dir fwd|rev`), plus a single output on **J8.1 (PA5)**; 0.01 Hz – 50 kHz, set from a serial terminal.
+**Receiver (0.3.0, in test):** inputs **J8.2 / J8.3** measure A/B and show speed, phase, direction, distance and
+faults (`rx`, `monitor`). A speed model and interface hardware follow ([`PLAN.md`](PLAN.md)).
 
 ## Quick start
 

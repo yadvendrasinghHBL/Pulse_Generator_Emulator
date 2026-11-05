@@ -13,6 +13,7 @@
 #include "diag.h"
 #include "pulse.h"
 #include "quad.h"
+#include "rx.h"
 #include "version.h"
 
 #include <stdlib.h>
@@ -240,6 +241,135 @@ static void cmd_dir(int argc, char **argv)
   print_output_line();
 }
 
+/* Print v with `dec` decimals (newlib-nano printf has no float) */
+static void print_fixed(double v, unsigned dec)
+{
+  static const uint32_t p10[] = {1U, 10U, 100U, 1000U};
+  int neg = v < 0.0;
+
+  if (neg) {
+    v = -v;
+  }
+  if (v > 4.0e9) {
+    v = 4.0e9;
+  }
+  uint32_t whole = (uint32_t)v;
+  uint32_t frac = (uint32_t)((v - (double)whole) * p10[dec] + 0.5);
+
+  if (frac >= p10[dec]) {
+    whole++;
+    frac = 0;
+  }
+  con_printf("%s%lu", neg && (whole || frac) ? "-" : "", whole);
+  if (dec == 1U) {
+    con_printf(".%01lu", frac);
+  } else if (dec == 2U) {
+    con_printf(".%02lu", frac);
+  } else if (dec == 3U) {
+    con_printf(".%03lu", frac);
+  }
+}
+
+static void print_phase(const rx_values_t *v)
+{
+  if (v->phase_deg < 0.0) {
+    con_puts("phase -");
+  } else {
+    con_puts("phase ");
+    print_fixed(v->phase_deg, 1);
+    con_printf(" deg %s", v->forward ? "forward" : "reverse");
+  }
+}
+
+static void cmd_rx(int argc, char **argv)
+{
+  rx_values_t v;
+
+  if (argc == 2 && strcmp(argv[1], "reset") == 0) {
+    rx_reset_distance();
+    con_puts("OK distance and pulse count set to 0\n");
+    return;
+  }
+  if (argc != 1) {
+    con_puts("ERR usage: rx | rx reset\n");
+    return;
+  }
+  rx_get(&v);
+  con_printf("receiver %s, %u ppr, wheel %u mm: %s\n", RX_NAME, RX_PPR, RX_WHEEL_MM,
+             rx_status_name(v.status));
+  for (int n = 0; n < 2; n++) {
+    con_printf("%c ", n ? 'B' : 'A');
+    print_fixed(v.freq_hz[n], 3);
+    con_puts(" Hz, duty ");
+    print_fixed(v.duty_pct[n], 1);
+    con_puts(" %\n");
+  }
+  print_phase(&v);
+  con_puts("\nspeed ");
+  print_fixed(v.speed_kmh, 2);
+  con_puts(" km/h, accel ");
+  print_fixed(v.accel_ms2, 2);
+  con_puts(" m/s2\ndistance ");
+  print_fixed(v.distance_m, 3);
+  con_printf(" m, pulses %ld%s, lost edges %lu\n",
+             (int32_t)v.pulses, (v.pulses > INT32_MAX || v.pulses < INT32_MIN) ? " (overflow)" : "",
+             v.overcaptures);
+}
+
+/* One line per update until a key is pressed; the key stays in the input, so
+ * typing a command (e.g. `status` + Enter) stops the monitor and runs it. */
+static void cmd_monitor(int argc, char **argv)
+{
+  rx_values_t v;
+
+  if (argc != 1) {
+    con_puts("ERR usage: monitor (press Enter to stop)\n");
+    return;
+  }
+  con_printf("monitor: %s, %u ppr, wheel %u mm, every %u ms. Press Enter to stop.\n",
+             RX_NAME, RX_PPR, RX_WHEEL_MM, RX_UPDATE_MS);
+  con_puts("    km/h  m/s2      A Hz   A %      B Hz   B %  phase deg       dist m  status\n");
+  rx_updated();
+  uint32_t beat = HAL_GetTick();
+  while (!con_line_pending()) {
+    rx_poll();
+    if (HAL_GetTick() - beat >= 500U) {
+      beat += 500U;
+      HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);
+    }
+    if (!rx_updated()) {
+      continue;
+    }
+    rx_get(&v);
+    con_puts(" ");
+    print_fixed(v.speed_kmh, 2);
+    con_puts("  ");
+    print_fixed(v.accel_ms2, 2);
+    for (int n = 0; n < 2; n++) {
+      con_puts("  ");
+      print_fixed(v.freq_hz[n], 2);
+      con_puts("  ");
+      print_fixed(v.duty_pct[n], 1);
+    }
+    con_puts("  ");
+    if (v.phase_deg < 0.0) {
+      con_puts("-");
+    } else {
+      print_fixed(v.phase_deg, 1);
+      con_puts(v.forward ? " fwd" : " rev");
+    }
+    con_puts("  ");
+    print_fixed(v.distance_m, 3);
+    con_printf("  %s\n", rx_status_name(v.status));
+  }
+  con_puts("monitor stopped\n");
+}
+
+static void cmd_inputs(int argc, char **argv)
+{
+  rx_print_inputs();
+}
+
 static void cmd_reset(int argc, char **argv)
 {
   con_puts("resetting\n");
@@ -333,6 +463,8 @@ static const cli_cmd_t commands[] = {
   { "start",      "start | start <Hz>: J8.1 and A/B (J8.6, J8.7)",       cmd_start,      0 },
   { "stop",       "stop | stop low: stop, hold the levels or force low", cmd_stop,       0 },
   { "dir",        "dir | dir fwd | dir rev: which channel leads (stopped)", cmd_dir,     0 },
+  { "rx",         "rx | rx reset: receiver values (J8.2, J8.3) / zero distance", cmd_rx, 0 },
+  { "monitor",    "receiver values every 0.5 s until Enter",             cmd_monitor,    0 },
   { "reset",      "software reset (output off until the next start)",    cmd_reset,      0 },
   /* Engineering commands (`help all`): bring-up, service, firmware update */
   { "info",       "chip ID, flash, UID, clocks, option bytes, reset",    cmd_info,       1 },
@@ -340,6 +472,7 @@ static const cli_cmd_t commands[] = {
   { "vdd",        "measure Vdrive (VDDA) and die temperature",           cmd_vdd,        1 },
   { "led",        "led <green|orange> <on|off>",                         cmd_led,        1 },
   { "boot0",      "read the BOOT0 pin level",                            cmd_boot0,      1 },
+  { "inputs",     "receiver pin levels, raw edge counts, TIM3 registers", cmd_inputs,    1 },
   { "bootloader", "jump to ROM bootloader (UART flashing)",              cmd_bootloader, 1 },
 };
 

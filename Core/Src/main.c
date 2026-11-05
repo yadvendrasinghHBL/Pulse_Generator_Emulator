@@ -3,7 +3,8 @@
  *
  * Emulates an axle-mounted optical pulse generator: two 50 % square waves
  * 90 degrees apart on J8.6/J8.7 (TIM1) plus a single output on J8.1 (PA5,
- * TIM2_CH1), all set over the USB serial console.
+ * TIM2_CH1), all set over the USB serial console. A receiver on J8.2/J8.3
+ * (TIM3 input capture) measures A/B signals and shows the speed parameters.
  *
  * Boot sequence: attenuator LE low -> clocks -> LEDs -> console -> POST ->
  * pulse timer (output stays off until `start`) -> command shell.
@@ -15,6 +16,7 @@
 #include "diag.h"
 #include "pulse.h"
 #include "quad.h"
+#include "rx.h"
 #include "version.h"
 
 /* Pause before the banner so the boot output can be watched on a terminal */
@@ -109,6 +111,7 @@ int main(void)
   diag_init();
   pulse_init();
   quad_init();
+  rx_init();
 
   HAL_Delay(BANNER_DELAY_MS);
   con_printf("\n\nPulse Generator Emulator v%s (%s %s)\n", FW_VERSION, __DATE__, __TIME__);
@@ -128,6 +131,7 @@ int main(void)
       con_printf("ERR line too long (max %u chars)\n", CON_LINE_MAX);
       cli_prompt();
     }
+    rx_poll();
     if (HAL_GetTick() - last_beat >= 500U) {
       last_beat += 500U;
       HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);

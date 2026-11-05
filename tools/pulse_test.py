@@ -97,6 +97,90 @@ def sequence_check(b, direction):
           f"{fmt(got)} (expected {fmt(want)})")
 
 
+def parse_rx(r):
+    """Receiver values from `rx`, or None if the reply does not parse."""
+    try:
+        f = re.findall(r"^([AB]) ([\d.]+) Hz, duty ([\d.]+) %", r, re.M)
+        ph = re.search(r"^phase (?:([\d.]+) deg (forward|reverse)|-)", r, re.M)
+        sp = re.search(r"^speed ([\d.]+) km/h", r, re.M)
+        pu = re.search(r"pulses (-?\d+)", r)
+        st = re.search(r"^receiver .*: (.+)$", r, re.M)
+        return {
+            "fa": float(f[0][1]), "da": float(f[0][2]), "fb": float(f[1][1]), "db": float(f[1][2]),
+            "phase": float(ph.group(1)) if ph.group(1) else None, "dir": ph.group(2),
+            "speed": float(sp.group(1)), "pulses": int(pu.group(1)), "status": st.group(1).strip(),
+        }
+    except (AttributeError, IndexError, ValueError):
+        return None
+
+
+def receiver_checks(b):
+    """Stage 4: needs loopback wires J8.6 -> J8.2 and J8.7 -> J8.3 (skipped without them)."""
+    b.cmd("stop low")
+    b.cmd("dir fwd")
+    b.cmd("start 1000")
+    time.sleep(1.6)
+    v = parse_rx(b.cmd("rx"))
+    if v is None:
+        check(False, "rx reply parses")
+        return
+    if v["fa"] == 0 and v["fb"] == 0:
+        print("[SKIP] receiver checks: no signal on J8.2/J8.3 (loopback wires J8.6->J8.2, J8.7->J8.3 not fitted)")
+        b.cmd("stop low")
+        return
+    kmh = 1000 * 3.141592653589793 * 0.92 / 200 * 3.6           # 52.02 km/h at 1000 Hz
+    check(abs(v["fa"] - 1000) < 0.5 and abs(v["fb"] - 1000) < 0.5, "rx frequency A/B at 1000 Hz",
+          f"A {v['fa']} Hz, B {v['fb']} Hz (same clock as the outputs: expect 1000 +/- 0.5)")
+    check(49.5 <= v["da"] <= 50.5 and 49.5 <= v["db"] <= 50.5, "rx duty A/B 50 %",
+          f"A {v['da']} %, B {v['db']} %")
+    check(v["phase"] is not None and 89 <= v["phase"] <= 91 and v["dir"] == "forward",
+          "rx phase forward 90 deg", f"{v['phase']} deg {v['dir']}")
+    check(v["status"] == "OK", "rx status OK", v["status"])
+    check(abs(v["speed"] - kmh) < kmh * 0.005, "rx speed at 1000 Hz", f"{v['speed']} km/h (expect {kmh:.2f})")
+
+    b.cmd("rx reset")
+    p0 = parse_rx(b.cmd("rx"))["pulses"]
+    time.sleep(2.0)
+    p1 = parse_rx(b.cmd("rx"))["pulses"]
+    check(p1 - p0 > 1500, "rx distance counts up forward", f"{p1 - p0} pulses in about 2 s")
+
+    b.cmd("stop")
+    b.cmd("dir rev")
+    b.cmd("start 1000")
+    time.sleep(1.6)
+    v = parse_rx(b.cmd("rx"))
+    check(v["phase"] is not None and 269 <= v["phase"] <= 271 and v["dir"] == "reverse",
+          "rx phase reverse 270 deg", f"{v['phase']} deg {v['dir']}")
+    check(v["status"] == "OK", "rx status OK in reverse", v["status"])
+    q0 = v["pulses"]
+    time.sleep(1.0)
+    q1 = parse_rx(b.cmd("rx"))["pulses"]
+    check(q1 < q0, "rx distance counts down in reverse", f"{q0} -> {q1}")
+
+    b.cmd("stop")
+    b.cmd("dir fwd")
+    b.cmd("start 1")
+    time.sleep(3.2)
+    v = parse_rx(b.cmd("rx"))
+    check(abs(v["fa"] - 1) < 0.01, "rx low speed: 1 Hz", f"A {v['fa']} Hz, speed {v['speed']} km/h")
+
+    b.cmd("stop")
+    time.sleep(2.8)
+    v = parse_rx(b.cmd("rx"))
+    check(v["status"] == "standstill" and v["speed"] == 0, "rx standstill 2 s after stop",
+          f"{v['status']}, {v['speed']} km/h")
+
+    b.cmd("start 1000")
+    b.port.write(b"monitor\r")
+    time.sleep(1.8)
+    b.port.write(b"\r")
+    out = read_reply(b.port)
+    lines = [ln for ln in out.split("\n") if re.match(r"^ \d+\.\d\d ", ln)]
+    check(len(lines) >= 2 and "monitor stopped" in out and all(ln.rstrip().endswith("OK") for ln in lines),
+          "monitor prints lines and stops on Enter", f"{len(lines)} lines" + (f", last: {lines[-1].strip()}" if lines else ""))
+    b.cmd("stop low")
+
+
 def main():
     path = os.environ.get("PORT", "/dev/ttyUSB0")
     if not os.path.exists(path):
@@ -163,6 +247,8 @@ def main():
 
         r = b.cmd("stop low")
         check("level low" in r and "levels A low, B low" in r, "stop low forces all outputs low", r)
+
+        receiver_checks(b)
 
     failed = results.count(False)
     print(f"\n{'ALL CHECKS PASSED' if not failed else f'FAILED: {failed} of {len(results)} checks'}"

@@ -6,6 +6,13 @@ A GitHub release is created from the section of the tagged version.
 
 ## [Unreleased]
 
+### Added
+- Stage 4: receiver on J8.2 (PA6, TIM3_CH1) and J8.3 (PA7, TIM3_CH2): input capture on both edges,
+  frequency and duty per input, phase A–B, direction, speed (200 ppr, 920 mm), signed distance,
+  acceleration, standstill after 2 s, faults (input missing, phase outside 90° ± 20°).
+- Commands `rx`, `rx reset`, `monitor`; engineering command `inputs` (raw pin levels, edge counts, TIM3).
+- `pulse_test.py`: receiver checks with loopback wires J8.6 → J8.2, J8.7 → J8.3 (skipped without them).
+
 ## [0.2.0] - 2026-11-05
 
 ### Added

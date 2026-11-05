@@ -48,6 +48,17 @@
 #define QUAD_NAME           "A J8.6 (PB0) / B J8.7 (PB1), TIM1"
 
 /*
+ * Receiver inputs (stage 4): J8.2 = PA6 (U1 pin 22), TIM3_CH1 on AF2;
+ * J8.3 = PA7 (U1 pin 23), TIM3_CH2 on AF2. 3.3 V logic only.
+ */
+#define RX_A_PORT           GPIOA
+#define RX_A_PIN            GPIO_PIN_6
+#define RX_B_PORT           GPIOA
+#define RX_B_PIN            GPIO_PIN_7
+#define RX_AF               GPIO_AF2_TIM3
+#define RX_NAME             "A J8.2 (PA6) / B J8.3 (PA7), TIM3"
+
+/*
  * Attenuator latch: the eight QPC6713 attenuators of the Handoff Simulator are
  * still on the board. This firmware does not use them, but their LE line (PB6,
  * U1 pin 58) has no pull-down and must not float (docs/HARDWARE.md finding 4).
