@@ -1,0 +1,9 @@
+firmware:  Pulse Generator Emulator v0.1.0 (release build, -Os)
+git:       1d3b47c93783a147fc95f6b5c412ca3b84861a2b
+tag:       1d3b47c
+built:     2026-11-05 11:14:24 +0530 by hbl@cbtc10
+toolchain: arm-none-eabi-gcc (Arm GNU Toolchain 14.3.Rel1 (Build arm-14.174)) 14.3.1 20250623
+flash at:  0x08000000 (.bin), .hex carries its own addresses
+
+   text	   data	    bss	    dec	    hex	filename
+  22312	    112	   6912	  29336	   7298	build/release/pulse_gen.elf
