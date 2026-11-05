@@ -44,7 +44,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | Stage | Content | Pins | Status |
 |---|---|---|---|
 | 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done: v0.1.0 released 2026-11-05; automatic and scope tests pass on board 1** |
-| 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **FW 0.2.0: automatic tests pass on board 1; scope checks open** |
+| 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **done: FW 0.2.0, automatic and scope tests pass on board 1 (2026-11-05); tag v0.2.0 pending** |
 | 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | open |
 | 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | open |
 | 5 | PC display for the receiver | PC tool | not planned (Q6: console `monitor` only) |
@@ -69,8 +69,8 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | 2.1 | `tools/build_all.sh`: debug + release, 0 warnings | PASS (2026-11-05) |
 | 2.2 | Flash, POST, `status` FW 0.2.0, all outputs off at boot | PASS (2026-11-05, board 1, UART bootloader) |
 | 2.3 | `tools/pulse_test.py`: ALL CHECKS PASSED (A/B rate, `dir`, A/B order both directions) | PASS (2026-11-05, board 1, 26/26) |
-| 2.4 | Scope CH1 J8.6, CH2 J8.7: both 50 %, B 90° behind A (forward), ahead (reverse) | open (`docs/MANUAL_TEST.md` T11) |
-| 2.5 | Scope: frequency change while running keeps 90°, no short pulse on A or B | open (T12) |
+| 2.4 | Scope CH1 J8.6, CH2 J8.7: both 50 %, B 90° behind A (forward), ahead (reverse) | PASS (2026-11-05, board 1, DS1054, T11 reported completed by the user; phase readings not reported) |
+| 2.5 | Scope: frequency change while running keeps 90°, no short pulse on A or B | PASS (2026-11-05, board 1, DS1054, T12: width trigger < 150 µs did not fire on A or B at 1000 → 2500 Hz, control fired, phase kept, 0.05 Hz → 1 kHz at once) |
 
 ## 3. Decisions needed (user)
 
@@ -137,3 +137,6 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   A1B0 -> A1B1 -> A0B1, reverse A0B1 -> A1B1 -> A1B0. First run failed 2 checks because the test sampled
   on the edges (first edge is 1/8 period after `start`, not 1/4); test fixed, firmware unchanged.
   Not verified: 90° and waveform on the scope (checks 2.4, 2.5).
+- 2026-11-05: Stage 2 scope test on board 1 (Rigol DS1054), reported by the user: T11 (90°, duty, direction)
+  completed; T12 (frequency change keeps 90°, no short pulse on A or B, 0.05 Hz -> 1 kHz at once): all
+  checks passed. Measured values of T11 (phase reading and its sign) not reported.
