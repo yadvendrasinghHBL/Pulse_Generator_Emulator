@@ -1,0 +1,20 @@
+# ST-LINK debug probes (STMicroelectronics, USB vendor 0483), used to program and
+# debug STM32 microcontrollers with STM32CubeProgrammer.
+#
+# TAG+="uaccess" gives read/write access only to the user logged in at the
+# local console (systemd-logind), not to every account on the machine.
+# Install:  sudo install -m 644 60-st-link.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload-rules && sudo udevadm trigger
+# Remove:   sudo rm /etc/udev/rules.d/60-st-link.rules && sudo udevadm control --reload-rules
+
+# ST-LINK/V2 (the probe in use)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3748", TAG+="uaccess"
+# ST-LINK/V2-1 (on Nucleo/Discovery boards)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374b", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3752", TAG+="uaccess"
+# ST-LINK/V3 (standalone, loader and debug modes)
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374d", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374e", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="374f", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3753", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="3754", TAG+="uaccess"

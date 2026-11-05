@@ -1,0 +1,14 @@
+# Dependabot (PLAN R3): opens a pull request when a GitHub Action used in .github/workflows/
+# has a new version (e.g. the Node 20 -> Node 24 moves). Only the Actions are tracked: the
+# vendored ST HAL/CMSIS in Drivers/ is not a package (update it with tools/vendor_cube.sh).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: "CI"
+    groups:
+      actions:
+        patterns: ["*"]

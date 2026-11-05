@@ -1,0 +1,12 @@
+# Normalise text to LF in the repo; scripts must stay LF to run on Linux/macOS.
+* text=auto eol=lf
+*.sh  text eol=lf
+*.py  text eol=lf
+# Binary files: no diff, no line-ending conversion
+*.pdf binary
+*.bin binary
+*.hex binary
+*.elf binary
+*.png binary
+# Vendored ST code: byte-for-byte as shipped (some CMSIS files are CRLF), hidden from GitHub stats and diffs
+Drivers/** -text linguist-vendored -diff

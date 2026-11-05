@@ -1,0 +1,34 @@
+// Zed tasks for the Pulse Generator Emulator firmware.
+// Run with: Ctrl+Shift+P -> "task: spawn" (or Alt+Shift+T), then pick one.
+// Python tools need pyserial: they run from ~/.venvs/bringup (python3 -m venv + pip install pyserial).
+// Only one program can use /dev/ttyUSB0 at a time: close picocom before a test or board task.
+// Every task opens the port with DTR OFF (picocom --lower-dtr, pyserial dtr=False): on rev A boards
+// DTR on holds the MCU in reset (docs/HARDWARE.md finding 3).
+[
+  // ---- build ----------------------------------------------------------------
+  { "label": "build: debug", "command": "cmake --preset debug && cmake --build --preset debug", "cwd": "$ZED_WORKTREE_ROOT" },
+  { "label": "build: release", "command": "cmake --preset release && cmake --build --preset release", "cwd": "$ZED_WORKTREE_ROOT" },
+  { "label": "build: all (definition of done, zero warnings)", "command": "tools/build_all.sh --keep", "cwd": "$ZED_WORKTREE_ROOT" },
+
+  // ---- flash ----------------------------------------------------------------
+  { "label": "flash: SWD debug build (ST-LINK on J6)", "command": "cmake --build --preset debug --target flash", "cwd": "$ZED_WORKTREE_ROOT" },
+  { "label": "flash: SWD release build (ST-LINK on J6)", "command": "cmake --build --preset release --target flash", "cwd": "$ZED_WORKTREE_ROOT" },
+  { "label": "flash: UART debug build (no ST-LINK; bootloader command, then flash_uart)",
+    "command": "tools/con_send.sh bootloader && sleep 1 && cmake --build --preset debug --target flash_uart", "cwd": "$ZED_WORKTREE_ROOT" },
+  { "label": "flash: release run (clean build, save artifacts/, delete build/, flash, check version)",
+    "command": "tools/build_and_flash.sh", "cwd": "$ZED_WORKTREE_ROOT" },
+
+  // ---- test -----------------------------------------------------------------
+  { "label": "test: pulse_test (commands + pulse rate)", "command": "~/.venvs/bringup/bin/python tools/pulse_test.py", "cwd": "$ZED_WORKTREE_ROOT" },
+
+  // ---- board: one-click actions ---------------------------------------------
+  { "label": "board: status", "command": "tools/con_send.sh status", "cwd": "$ZED_WORKTREE_ROOT" },
+  { "label": "board: start 1 kHz on J8.1", "command": "tools/con_send.sh 'start 1000'", "cwd": "$ZED_WORKTREE_ROOT" },
+  { "label": "board: stop (output low)", "command": "tools/con_send.sh 'stop low'", "cwd": "$ZED_WORKTREE_ROOT" },
+
+  // ---- serial / debug -------------------------------------------------------
+  { "label": "serial: console (picocom, exit Ctrl+A Ctrl+X)", "command": "picocom -b 115200 --lower-dtr /dev/ttyUSB0",
+    "cwd": "$ZED_WORKTREE_ROOT", "use_new_terminal": true },
+  { "label": "debug: GDB over SWD (stop in main; 'pulse' shows TIM2)", "command": "tools/debug.sh",
+    "cwd": "$ZED_WORKTREE_ROOT", "use_new_terminal": true },
+]

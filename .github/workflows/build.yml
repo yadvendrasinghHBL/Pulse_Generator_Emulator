@@ -1,0 +1,91 @@
+# Build check on GitHub's servers, and GitHub releases from version tags.
+#   push / pull request: tools/build_all.sh (debug, release, zero warnings) + Python syntax check
+#   tag v*: also checks the tag matches FW_VERSION and creates a GitHub release with the release image,
+#           SHA256SUMS; release notes = that version's CHANGELOG.md section
+# Hardware tests (flash, pulse_test.py) need the bench and stay local.
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  ARM_TC: arm-gnu-toolchain-14.3.rel1-x86_64-arm-none-eabi
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Cache Arm toolchain
+        id: tc-cache
+        uses: actions/cache@v6
+        with:
+          path: ~/${{ env.ARM_TC }}
+          key: ${{ env.ARM_TC }}
+
+      - name: Download Arm toolchain 14.3.rel1
+        if: steps.tc-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o /tmp/tc.tar.xz \
+            "https://developer.arm.com/-/media/Files/downloads/gnu/14.3.rel1/binrel/${ARM_TC}.tar.xz"
+          tar -xJf /tmp/tc.tar.xz -C ~
+
+      - name: Install CMake + Ninja
+        run: sudo apt-get update -q && sudo apt-get install -yq ninja-build cmake
+
+      - name: Build debug + release, zero warnings
+        run: |
+          echo "ARM_TOOLCHAIN_PATH=$HOME/$ARM_TC/bin" >> "$GITHUB_ENV"
+          ARM_TOOLCHAIN_PATH="$HOME/$ARM_TC/bin" tools/build_all.sh
+
+      - name: Python syntax check (tools)
+        run: python3 -m py_compile tools/*.py .claude/hooks/*.py
+
+      - name: Collect release image
+        run: |
+          VER=$(sed -n 's/^#define FW_VERSION "\(.*\)"/\1/p' Core/Inc/version.h)
+          echo "VER=$VER" >> "$GITHUB_ENV"
+          mkdir -p dist
+          for ext in hex bin elf map; do
+            cp "build/release/pulse_gen.$ext" "dist/pulse_gen_v${VER}.$ext"
+          done
+          (cd dist && sha256sum * > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: pulse_gen_v${{ env.VER }}_${{ github.sha }}
+          path: dist/
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Tag must match FW_VERSION
+        run: |
+          VER=$(sed -n 's/^#define FW_VERSION "\(.*\)"/\1/p' Core/Inc/version.h)
+          test "${GITHUB_REF_NAME}" = "v${VER}" || { echo "tag ${GITHUB_REF_NAME} != FW_VERSION ${VER}"; exit 1; }
+          awk -v v="$VER" '$0 ~ "^## \\[" v "\\]" {f=1; next} /^## \[/ {f=0} f' CHANGELOG.md > notes.md
+          test -s notes.md || echo "See PLAN.md log." > notes.md
+
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: notes.md
+          files: dist/*

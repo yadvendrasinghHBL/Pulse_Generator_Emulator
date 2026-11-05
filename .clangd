@@ -1,0 +1,11 @@
+# clangd (Zed, VS Code, ...): use the debug build's compile database, so code navigation and
+# diagnostics match the real arm-none-eabi build. Run `cmake --preset debug` once after a clean.
+CompileFlags:
+  CompilationDatabase: build/debug
+Diagnostics:
+  Suppress: [drv_unknown_argument, drv_unsupported_opt_for_target]
+---
+If:
+  PathMatch: Drivers/.*
+Diagnostics:
+  Suppress: "*"

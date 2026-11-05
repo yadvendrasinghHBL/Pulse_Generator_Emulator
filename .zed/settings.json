@@ -1,0 +1,12 @@
+// Zed project settings. Indentation etc. come from .editorconfig; clangd reads .clangd.
+// --query-driver lets clangd ask arm-none-eabi-gcc for its newlib headers (stdint.h, string.h).
+{
+  "lsp": {
+    "clangd": {
+      "binary": {
+        "arguments": ["--query-driver=**/arm-none-eabi-gcc", "--header-insertion=never"]
+      }
+    }
+  },
+  "file_scan_exclusions": ["build", "**/__pycache__"]
+}

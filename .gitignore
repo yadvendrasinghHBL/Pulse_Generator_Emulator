@@ -1,0 +1,11 @@
+build/
+__pycache__/
+*.pyc
+.cache/
+compile_commands.json
+.vscode/
+# release images are kept in git, except builds from uncommitted code
+artifacts/*-dirty/
+.claude/settings.local.json
+.~lock.*#
+~$*
