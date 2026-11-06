@@ -30,10 +30,33 @@ static int running(void)
   return quad_state() == PULSE_RUNNING;
 }
 
+static int32_t ovr_accel = -1;    /* profile rates (-1 = use the settings) */
+static int32_t ovr_decel = -1;
+
+uint32_t speed_accel_mm_s2(void)
+{
+  return ovr_accel >= 0 ? (uint32_t)ovr_accel : settings_accel_mm_s2();
+}
+
+uint32_t speed_decel_mm_s2(void)
+{
+  return ovr_decel >= 0 ? (uint32_t)ovr_decel : settings_decel_mm_s2();
+}
+
+void speed_override_rates(int32_t accel, int32_t decel)
+{
+  if (accel >= -1 && accel <= (int32_t)SETTINGS_ACCEL_MAX_MM_S2) {
+    ovr_accel = accel;
+  }
+  if (decel >= -1 && decel <= (int32_t)SETTINGS_ACCEL_MAX_MM_S2) {
+    ovr_decel = decel;
+  }
+}
+
 /* Ramp rate toward the target: accel when speeding up, decel when slowing down */
 static uint32_t rate_mm_s2(void)
 {
-  return v_target >= v_now ? settings_accel_mm_s2() : settings_decel_mm_s2();
+  return v_target >= v_now ? speed_accel_mm_s2() : speed_decel_mm_s2();
 }
 
 static double mhz_exact(double v)
@@ -70,6 +93,13 @@ static void outputs_start(void)
   quad_start();
 }
 
+/* Moving again after a standstill: the outputs go on from the held levels */
+static void outputs_resume(void)
+{
+  pulse_resume();
+  quad_resume();
+}
+
 static void outputs_stop(int force_low)
 {
   pulse_stop(force_low);
@@ -86,7 +116,7 @@ static void drive_at(double v)
     set_outputs_mhz(mhz);
   }
   if (!running()) {
-    outputs_start();
+    outputs_resume();
   }
 }
 
@@ -196,14 +226,19 @@ void speed_brake(void)
   set_target(0.0);
 }
 
+double speed_kmh_to_rpm(double kmh)
+{
+  return kmh / 3.6 / circ_m() * 60.0;
+}
+
 double speed_rpm(void)
 {
-  return v_now / circ_m() * 60.0;
+  return speed_kmh_to_rpm(v_now * 3.6);
 }
 
 double speed_target_rpm(void)
 {
-  return v_target / circ_m() * 60.0;
+  return speed_kmh_to_rpm(v_target * 3.6);
 }
 
 double speed_kmh(void)
@@ -259,7 +294,10 @@ uint32_t speed_slip_left_ms(void)
 void speed_slip_off(void)
 {
   if (slip_pct != 0) {
-    slip_end = HAL_GetTick();     /* speed_poll restores the frequency */
+    slip_pct = 0;                 /* the wheel grips again at once */
+    if (running() && v_now > 0.0) {
+      drive_at(v_now);
+    }
   }
 }
 

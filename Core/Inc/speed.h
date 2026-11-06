@@ -29,10 +29,16 @@ int      speed_set_target_crpm(uint32_t crpm);
 void     speed_brake(void);
 uint32_t speed_max_crpm(void);               /* rpm at speed_max_ckmh() */
 double   speed_rpm(void);                    /* wheel rpm now */
+double   speed_kmh_to_rpm(double kmh);       /* with the current wheel diameter */
 double   speed_target_rpm(void);
 double   speed_kmh(void);                    /* speed now; 0 while the outputs are not running */
 double   speed_target_kmh(void);
 int      speed_ramping(void);
+/* Ramp rates in use: the settings, or a running profile's own rates */
+uint32_t speed_accel_mm_s2(void);
+uint32_t speed_decel_mm_s2(void);
+/* Profile rates in mm/s2 (-1 = back to the settings); the settings are not changed */
+void     speed_override_rates(int32_t accel, int32_t decel);
 int      speed_moving(void);                 /* outputs running, or a ramp about to start them */
 double   speed_distance_m(void);             /* A pulses since start x distance per pulse, - in reverse */
 

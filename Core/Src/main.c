@@ -11,6 +11,7 @@
  * `start` or `speed`).
  * Green LED = heartbeat (firmware alive), orange LED = POST failure / fault.
  */
+#include "app.h"
 #include "board.h"
 #include "cli.h"
 #include "console.h"
@@ -28,6 +29,20 @@
 #define BANNER_DELAY_MS 2000U
 
 void Error_Handler(void);
+
+void app_poll(void)
+{
+  static uint32_t last_beat;
+
+  rx_poll();
+  speed_poll();
+  fault_poll();
+  profile_poll();
+  if (HAL_GetTick() - last_beat >= 500U) {
+    last_beat = HAL_GetTick();
+    HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);
+  }
+}
 
 /* HSI16 -> PLL (M=1, N=10, R=2) -> 80 MHz SYSCLK, voltage range 1, 4 WS.
  * APB1 = APB2 = 80 MHz, so the TIM2 and TIM1 clocks are 80 MHz (12.5 ns). */
@@ -137,7 +152,6 @@ int main(void)
              PULSE1_NAME, QUAD_NAME);
   cli_prompt();
 
-  uint32_t last_beat = HAL_GetTick();
   for (;;) {
     int got = con_getline(line, sizeof(line));
     if (got > 0) {
@@ -146,14 +160,7 @@ int main(void)
       con_printf("ERR line too long (max %u chars)\n", CON_LINE_MAX);
       cli_prompt();
     }
-    rx_poll();
-    speed_poll();
-    fault_poll();
-    profile_poll();
-    if (HAL_GetTick() - last_beat >= 500U) {
-      last_beat += 500U;
-      HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);
-    }
+    app_poll();
   }
 }
 

@@ -30,6 +30,8 @@ uint32_t      quad_prescaler(void);       /* timer clock divider (PSC + 1) */
 int           quad_set_dir(quad_dir_t dir);
 quad_dir_t    quad_dir(void);
 void          quad_start(void);           /* both low; leading channel rises 1/8 period later */
+/* Continue from a stop with the levels held (count kept, no false edge); from OFF = quad_start() */
+void          quad_resume(void);
 void          quad_stop(int force_low);   /* force_low = 0: hold both levels */
 pulse_state_t quad_state(void);
 int           quad_level_a(void);         /* -1 if OFF */

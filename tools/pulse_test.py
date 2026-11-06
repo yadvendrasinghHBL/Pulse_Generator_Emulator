@@ -578,6 +578,83 @@ def profile_checks(b):
     b.cmd("stop low")
 
 
+def review_fix_checks(b):
+    """Code review fixes (2026-11-06): resume from held levels, short glitches, profile rates,
+    fault clear with slip, stuck channel at standstill."""
+    b.cmd("stop low")
+    b.cmd("fault clear")
+    for c in ("dir fwd", "accel 0", "decel 0"):
+        b.cmd(c)
+    st0 = parse_settings(b.cmd("ppr"))
+
+    # 1: speed after a held standstill goes on from the held levels, count kept
+    # 0.96 Hz: A rises 0.13 s after start, B at 0.39 s, A falls at 0.65 s -> stop at 0.5 s holds A1 B1,
+    # which the old code (forced low on restart) would have lost
+    b.cmd("speed 0.05")
+    sleep_until(b.sent_at + 0.5)
+    b.cmd("speed 0")
+    held = b.levels_ab()
+    n0 = b.counts()[1]
+    b.cmd("speed 0.05")
+    now = b.levels_ab()
+    n1 = b.counts()[1]
+    check(held is not None and any(held) and now == held and n0 is not None and n1 is not None and n1 >= n0,
+          "speed after standstill resumes from the held levels, count kept",
+          f"held {held}, after speed {now}, A/B pulses {n0} -> {n1}")
+    b.cmd("stop low")
+
+    # 5: stuck channel at standstill changes the pin at once
+    b.cmd("speed 0.05")
+    time.sleep(0.4)
+    b.cmd("speed 0")
+    b.cmd("fault a high")
+    hi = b.levels_ab()
+    b.cmd("fault a low")
+    lo = b.levels_ab()
+    b.cmd("fault a ok")
+    check(hi is not None and lo is not None and hi[0] and not lo[0],
+          "fault a high/low at standstill drives the pin at once", f"after high {hi}, after low {lo}")
+    b.cmd("stop low")
+
+    # 4: fault clear removes a slip at once
+    b.cmd("speed 50")
+    b.cmd("fault slip 20 10")
+    r = b.cmd("fault clear")
+    check(r.startswith("OK faults: none"), "fault clear with a slip active -> none at once", r.split("\n")[0])
+    b.cmd("stop low")
+
+    # 3a: profile accel/decel are for the run only
+    orig = parse_profile(b.cmd("profile"))
+    b.cmd("profile clear")
+    for stp in ("accel 20.000", "speed 36.00", "reach", "decel 20.000", "brake", "reach"):
+        b.cmd(f"profile add {stp}")
+    b.cmd("profile run")                             # 0.5 s up, 0.5 s braking
+    time.sleep(1.6)
+    pr = parse_profile(b.cmd("profile"))
+    st1 = parse_settings(b.cmd("ppr"))
+    check(pr["state"] == "done" and st1 is not None and (st1["accel"], st1["decel"], st1["state"])
+          == (st0["accel"], st0["decel"], st0["state"]),
+          "profile accel/decel steps leave the settings unchanged",
+          f"profile {pr['state']}, settings accel {st1 and st1['accel']}, decel {st1 and st1['decel']}, {st1 and st1['state']}")
+    b.cmd("profile clear")
+    for stp in orig["steps"]:
+        b.cmd(f"profile add {stp}")
+    b.cmd("stop low")
+
+    # 2: a 1 us glitch is still one rising edge (edge direction no longer read from the pin)
+    b.cmd("start 1000")
+    time.sleep(1.2)
+    v = parse_rx(b.cmd("rx"))
+    if v is not None and v["fa"] > 0:
+        b.cmd("fault glitch a 100 1")
+        time.sleep(1.6)
+        v = parse_rx(b.cmd("rx"))
+        check(abs(v["fa"] - 1100) < 15 and 49 <= v["db"] <= 51 and v["phase"] is not None,
+              "1 us glitches: receiver A about 1100 Hz", f"A {v['fa']} Hz, duty A {v['da']} %, phase {v['phase']}")
+        b.cmd("fault clear")
+    b.cmd("stop low")
+
+
 def main():
     path = os.environ.get("PORT", "/dev/ttyUSB0")
     if not os.path.exists(path):
@@ -649,6 +726,7 @@ def main():
         receiver_checks(b)
         fault_checks(b)
         profile_checks(b)
+        review_fix_checks(b)
 
     failed = results.count(False)
     print(f"\n{'ALL CHECKS PASSED' if not failed else f'FAILED: {failed} of {len(results)} checks'}"

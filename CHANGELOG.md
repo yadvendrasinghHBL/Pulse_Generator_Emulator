@@ -36,6 +36,16 @@ A GitHub release is created from the section of the tagged version.
 
 ### Changed
 - The receiver uses the `ppr` / `wheel` settings instead of fixed 200 ppr / 920 mm.
+- Profile `accel` / `decel` steps apply only while the profile runs; the settings are not changed.
+- `save` and `profile save` are refused while a signal arrives on J8.2/J8.3 (the flash erase stalls the receiver).
+
+### Fixed (code review)
+- `speed` / `rpm` / a profile step after a held standstill restarted the outputs from low with the count at 0
+  (false edges); they now continue from the held levels.
+- The receiver took each edge's direction from the pin level when its interrupt ran, so a glitch shorter
+  than the interrupt latency was counted wrong; the direction now follows from the alternating edges.
+- `fault clear` / `fault slip off` still showed the slip in their own reply.
+- `fault a|b low|high|ok` at standstill only changed the pin at the next start.
 
 ## [0.2.0] - 2026-11-05
 

@@ -28,6 +28,8 @@ uint32_t      pulse_get_mhz(void);        /* as requested */
 uint32_t      pulse_actual_mhz(void);     /* as produced by the timer (rounded) */
 uint32_t      pulse_half_period_ticks(void);
 void          pulse_start(void);
+/* Continue from a stop with the level held (count kept); from OFF it is pulse_start() */
+void          pulse_resume(void);
 /* Stop the output. force_low = 0: hold the current level (like a stopped wheel) */
 void          pulse_stop(int force_low);
 pulse_state_t pulse_state(void);

@@ -141,6 +141,31 @@ void pulse_start(void)
   TIM2->CR1 |= TIM_CR1_CEN;
 }
 
+/* Continue after a stop with the level held: no forced low, count kept. The
+ * held level stays for one full new half period, like a wheel that starts
+ * turning again from where its code disc stopped. */
+void pulse_resume(void)
+{
+  if (state != PULSE_STOPPED) {
+    pulse_start();
+    return;
+  }
+  int lvl = (PULSE1_PORT->IDR & PULSE1_PIN) != 0;
+
+  TIM2->DIER = 0;
+  set_oc_mode(OC1M_TOGGLE);       /* OC1REF keeps the held level */
+  TIM2->CNT = 0;
+  TIM2->SR = 0;
+  __disable_irq();
+  if ((int)(halves & 1U) != lvl) {
+    halves++;                     /* count parity = level (after `stop low`) */
+  }
+  __enable_irq();
+  state = PULSE_RUNNING;
+  TIM2->DIER = TIM_DIER_UIE;
+  TIM2->CR1 |= TIM_CR1_CEN;
+}
+
 void pulse_stop(int force_low)
 {
   TIM2->CR1 &= ~TIM_CR1_CEN;

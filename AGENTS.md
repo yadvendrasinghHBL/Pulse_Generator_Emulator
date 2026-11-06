@@ -53,6 +53,8 @@ Core/Src/speed.c          speed model: speed/rpm -> frequency, accel/decel ramps
 Core/Src/settings.c       ppr, wheel, accel, decel, vmax, dir in the last flash page (CRC records)
 Core/Src/fault.c          sensor fault emulation: glitch scheduling, `fault` status line
 Core/Src/profile.c        drive profiles: step player and flash storage (page 0x0803F000)
+Core/Src/flashlog.c       flash record log (CRC, append, erase when full) shared by settings and profile
+Core/Inc/app.h            app_poll(): background work for the main loop and `monitor` (defined in main.c)
 Core/Src/console.c        USART1 115200 8N1, IRQ RX ring buffer, blocking TX
 Core/Src/cli.c            command shell; `commands[]` is the command list (`help all` prints it)
 Core/Src/diag.c           IDs, VREFINT/temp ADC, POST, BOOT0 readback

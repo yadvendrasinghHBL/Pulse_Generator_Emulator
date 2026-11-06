@@ -12,13 +12,14 @@
  */
 #include "settings.h"
 #include "board.h"
+#include "flashlog.h"
 #include "quad.h"
 
 #include <stddef.h>
 
 #define REC_MAGIC     0x31534750U    /* "PGS1" */
 #define REC_VERSION   2U             /* 1: no decel/vmax (reserved = 0), still loaded */
-#define SLOTS         (SETTINGS_PAGE_BYTES / sizeof(rec_t))
+#define SLOTS         (FLASHLOG_PAGE_BYTES / sizeof(rec_t))
 
 typedef struct {
   uint32_t magic;
@@ -47,23 +48,9 @@ static const volatile rec_t *slot(uint32_t i)
   return (const volatile rec_t *)(SETTINGS_ADDR + i * sizeof(rec_t));
 }
 
-static uint32_t crc32(const void *data, size_t len)
-{
-  const uint8_t *p = data;
-  uint32_t crc = 0xFFFFFFFFU;
-
-  while (len--) {
-    crc ^= *p++;
-    for (int k = 0; k < 8; k++) {
-      crc = (crc >> 1) ^ (0xEDB88320U & (0U - (crc & 1U)));
-    }
-  }
-  return ~crc;
-}
-
 static int valid(const rec_t *r)
 {
-  if (r->magic != REC_MAGIC || r->crc != crc32(r, offsetof(rec_t, crc))) {
+  if (r->magic != REC_MAGIC || r->crc != flashlog_crc32(r, offsetof(rec_t, crc))) {
     return 0;
   }
   if (r->version == 2U && (r->decel_mm_s2 > SETTINGS_ACCEL_MAX_MM_S2 ||
@@ -74,18 +61,6 @@ static int valid(const rec_t *r)
          r->ppr >= SETTINGS_PPR_MIN && r->ppr <= SETTINGS_PPR_MAX &&
          r->wheel_mm >= SETTINGS_WHEEL_MIN_MM && r->wheel_mm <= SETTINGS_WHEEL_MAX_MM &&
          r->accel_mm_s2 <= SETTINGS_ACCEL_MAX_MM_S2 && r->dir <= (uint8_t)QUAD_REV;
-}
-
-static int erased(uint32_t i)
-{
-  const volatile uint32_t *w = (const volatile uint32_t *)slot(i);
-
-  for (size_t k = 0; k < sizeof(rec_t) / 4U; k++) {
-    if (w[k] != 0xFFFFFFFFU) {
-      return 0;
-    }
-  }
-  return 1;
 }
 
 static void set_defaults(rec_t *r)
@@ -115,15 +90,10 @@ void settings_init(void)
   set_defaults(&saved);
   saved.seq = 0;
   from_flash = 0;
-  used = 0;
-  for (uint32_t i = 0; i < SLOTS; i++) {
-    rec_t r;
+  used = flashlog_used(SETTINGS_ADDR, sizeof(rec_t));
+  for (uint32_t i = 0; i < used; i++) {
+    rec_t r = *(const rec_t *)slot(i);
 
-    if (erased(i)) {
-      break;                      /* records are written in order: the rest is free */
-    }
-    used = i + 1U;
-    r = *(const rec_t *)slot(i);
     if (valid(&r)) {
       upgrade(&r);
       saved = r;
@@ -235,43 +205,25 @@ void settings_defaults(void)
 int settings_save(void)
 {
   rec_t r = cur;
-  uint32_t i = used;
-  const uint64_t *dw = (const uint64_t *)(const void *)&r;
-  int err = 0;
 
   r.dir = (uint8_t)quad_dir();
   r.pad[0] = r.pad[1] = r.pad[2] = 0;
   r.seq = saved.seq + 1U;
   r.version = REC_VERSION;
   r.reserved = 0;
-  r.crc = crc32(&r, offsetof(rec_t, crc));
+  r.crc = flashlog_crc32(&r, offsetof(rec_t, crc));
 
-  HAL_FLASH_Unlock();
-  __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS | FLASH_FLAG_OPTVERR);
-  if (i >= SLOTS || !erased(i)) {
-    FLASH_EraseInitTypeDef e = {0};
-    uint32_t page_err = 0;
+  int i = flashlog_append(SETTINGS_ADDR, sizeof(rec_t), &used, &r);
 
-    e.TypeErase = FLASH_TYPEERASE_PAGES;
-    e.Banks = FLASH_BANK_1;
-    e.Page = (SETTINGS_ADDR - FLASH_BASE) / FLASH_PAGE_SIZE;
-    e.NbPages = 1;
-    err = HAL_FLASHEx_Erase(&e, &page_err) != HAL_OK;
-    i = 0;
+  if (i < 0) {
+    return -1;
   }
-  for (size_t k = 0; !err && k < sizeof(rec_t) / 8U; k++) {
-    err = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD,
-                            (uint32_t)slot(i) + 8U * k, dw[k]) != HAL_OK;
-  }
-  HAL_FLASH_Lock();
-
-  rec_t back = *(const rec_t *)slot(i);
-  if (err || !valid(&back) || back.seq != r.seq) {
+  rec_t back = *(const rec_t *)slot((uint32_t)i);
+  if (!valid(&back) || back.seq != r.seq) {
     used = SLOTS;                 /* force an erase on the next try */
     return -1;
   }
   saved = back;
   from_flash = 1;
-  used = i + 1U;
   return 0;
 }

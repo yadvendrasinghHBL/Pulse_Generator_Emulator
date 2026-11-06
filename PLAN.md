@@ -219,3 +219,12 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   the ramp; wait step now 2 s), second run ALL CHECKS PASSED (142/142): one pass 0 -> 36 km/h -> 0 in
   about 4 s with the receiver at 36.0 km/h, two passes, loop + stop, manual take-over, `speed 700` step
   FAILED at step 1, save -> reset -> loaded and not running.
+- 2026-11-06: Code review of v0.2.0..HEAD (10 findings, user: fix all, profile rates temporary). Fixed:
+  restart after a held standstill now resumes from the held levels (`quad_resume`, `pulse_resume`: counter
+  placed by the A/B levels, count kept); receiver edge direction from alternation, the pin only after an
+  overcapture; profile accel/decel as run-only overrides in `speed.c`; `fault clear` clears a slip at once;
+  stuck channel applied at standstill; `save`/`profile save` refused while the receiver sees edges (100 ms);
+  shared `flashlog.c`; `app_poll()` for the main loop and `monitor`; one rpm formula (`speed_kmh_to_rpm`);
+  `inputs` takes its pins from board.h. New checks for each. Board 1, loopback: ALL CHECKS PASSED (147/147),
+  e.g. held A1 B1 kept after `speed`, 1 us glitches -> A 1100.0 Hz. Not tested on the board: the `save`
+  refusal with an external signal (needs a second signal source).

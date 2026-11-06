@@ -344,6 +344,40 @@ void quad_start(void)
   TIM1->CR1 |= TIM_CR1_CEN;
 }
 
+/*
+ * Continue after a stop with the levels held: no forced low, count kept.
+ * The held levels give the position in the A/B cycle: equal levels = the lag
+ * channel toggled last (the next edge is the lead's), different = the lead
+ * toggled last (the next edge is the lag's). The counter is placed there, so
+ * the sequence goes on without a false edge.
+ */
+void quad_resume(void)
+{
+  if (state != PULSE_STOPPED) {
+    quad_start();
+    return;
+  }
+  int a = (QUAD_PORT->IDR & QUAD_A_PIN) != 0;
+  int b = (QUAD_PORT->IDR & QUAD_B_PIN) != 0;
+
+  /* A stuck channel's pin is not its sequence level: take it from the other */
+  if (force[0] != QUAD_CH_OK && force[1] == QUAD_CH_OK) {
+    a = b;
+  } else if (force[1] != QUAD_CH_OK) {
+    b = a;
+  }
+  TIM1->DIER = 0;
+  load_timebase(psc1, n_cnt);     /* CNT = 0 */
+  TIM1->CNT = a == b ? 0U : lead_cnt(n_cnt) + 1U;
+  TIM1->SR = 0;
+  __disable_irq();
+  apply_levels(a, b);
+  __enable_irq();
+  state = PULSE_RUNNING;
+  set_irqs();
+  TIM1->CR1 |= TIM_CR1_CEN;
+}
+
 void quad_stop(int force_low)
 {
   TIM1->CR1 &= ~TIM_CR1_CEN;
@@ -406,6 +440,17 @@ int quad_set_force(int ch, quad_force_t f)
       set_oc_mode(ch, f == QUAD_CH_HIGH ? OC_HIGH : OC_LOW);
     } else {
       resync();                   /* back in step with the other channel */
+    }
+  } else if (state == PULSE_STOPPED) {
+    /* Held levels: a stuck pin changes at once; a repaired one takes the
+     * other channel's level (a valid standstill position) */
+    if (f != QUAD_CH_OK) {
+      set_oc_mode(ch, f == QUAD_CH_HIGH ? OC_HIGH : OC_LOW);
+    } else {
+      int other = (QUAD_PORT->IDR & (ch ? QUAD_A_PIN : QUAD_B_PIN)) != 0;
+
+      set_oc_mode(ch, other ? OC_HIGH : OC_LOW);
+      set_oc_mode(ch, OC_TOGGLE);
     }
   }
   __enable_irq();

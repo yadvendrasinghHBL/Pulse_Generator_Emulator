@@ -52,6 +52,7 @@ typedef struct {
 
 static volatile capture_t cap;
 static volatile uint32_t ovf;
+static volatile uint8_t last_lvl[2];  /* input level after the last edge handled */
 
 static capture_t prev;               /* snapshot of the previous window */
 static uint64_t prev_now;
@@ -91,7 +92,7 @@ static void edge(int n, uint64_t t, int high)
     p->rises++;
     if (n == 0) {
       /* A rising: B low = A leads = forward */
-      cap.position += (RX_B_PORT->IDR & RX_B_PIN) ? -1 : 1;
+      cap.position += last_lvl[1] ? -1 : 1;
     } else if (cap.ch[0].have_period) {
       cap.phase_ticks = t - cap.ch[0].last_rise;
       cap.phase_period = cap.ch[0].period;
@@ -125,22 +126,34 @@ void rx_irq_handler(void)
     t[1] = ((uint64_t)(o + ((sr & TIM_SR_UIF) && c < 0x8000U)) << 16) | c;
     got[1] = 1;
   }
-  if (sr & (TIM_SR_CC1OF | TIM_SR_CC2OF)) {
-    TIM3->SR = ~(TIM_SR_CC1OF | TIM_SR_CC2OF);
+  /*
+   * Edge direction: the edges of one input always alternate, so each one is
+   * the opposite of the last. The pin is read only when edges were lost
+   * (overcapture): then the latest captured edge is the one that gave the
+   * level now. Reading the pin for every edge would give the wrong direction
+   * when the next edge follows within the interrupt latency (short glitch).
+   */
+  uint32_t of = sr & (TIM_SR_CC1OF | TIM_SR_CC2OF);
+
+  if (of) {
+    TIM3->SR = ~of;
     cap.overcaptures++;
   }
-  /* The level read now is the level after the edge (pulses are >= 10 us at 50 kHz) */
-  int lvl_a = (RX_A_PORT->IDR & RX_A_PIN) != 0;
-  int lvl_b = (RX_B_PORT->IDR & RX_B_PIN) != 0;
+  int lvl_a = (of & TIM_SR_CC1OF) ? (RX_A_PORT->IDR & RX_A_PIN) != 0 : !last_lvl[0];
+  int lvl_b = (of & TIM_SR_CC2OF) ? (RX_B_PORT->IDR & RX_B_PIN) != 0 : !last_lvl[1];
 
   if (got[0] && got[1] && t[1] < t[0]) {
+    last_lvl[1] = (uint8_t)lvl_b;
     edge(1, t[1], lvl_b);            /* keep time order: B first */
+    last_lvl[0] = (uint8_t)lvl_a;
     edge(0, t[0], lvl_a);
   } else {
     if (got[0]) {
+      last_lvl[0] = (uint8_t)lvl_a;
       edge(0, t[0], lvl_a);
     }
     if (got[1]) {
+      last_lvl[1] = (uint8_t)lvl_b;
       edge(1, t[1], lvl_b);
     }
   }
@@ -171,6 +184,8 @@ void rx_init(void)
                TIM_CCER_CC2E | TIM_CCER_CC2P | TIM_CCER_CC2NP;
   TIM3->EGR = TIM_EGR_UG;
   TIM3->SR = 0;
+  last_lvl[0] = (RX_A_PORT->IDR & RX_A_PIN) != 0;
+  last_lvl[1] = (RX_B_PORT->IDR & RX_B_PIN) != 0;
   TIM3->DIER = TIM_DIER_UIE | TIM_DIER_CC1IE | TIM_DIER_CC2IE;
   HAL_NVIC_SetPriority(TIM3_IRQn, 5, 0);
   HAL_NVIC_EnableIRQ(TIM3_IRQn);
@@ -290,13 +305,38 @@ void rx_reset_distance(void)
   val.distance_m = 0.0;
 }
 
+/* Mode, alternate function and pull of one pin, read from its port registers */
+static void print_pin_config(const char *name, GPIO_TypeDef *port, uint32_t pin)
+{
+  uint32_t i = (uint32_t)__builtin_ctz(pin);
+
+  con_printf("%s %s: MODER %lu AF %lu PUPDR %lu", name, (port->IDR & pin) ? "high" : "low",
+             (port->MODER >> (2U * i)) & 3U, (port->AFR[i >> 3] >> (4U * (i & 7U))) & 15U,
+             (port->PUPDR >> (2U * i)) & 3U);
+}
+
+int rx_signal_present(void)
+{
+  capture_t s;
+  uint64_t now;
+  const uint64_t recent = (uint64_t)(TICKS_PER_S / 10.0);   /* 100 ms */
+
+  snapshot(&s, &now);
+  for (int n = 0; n < 2; n++) {
+    if (s.ch[n].have_edge && now - s.ch[n].last_edge < recent) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 void rx_print_inputs(void)
 {
-  con_printf("pins: A J8.2 (PA6) %s, B J8.3 (PA7) %s; GPIOA MODER6/7 %lu/%lu AF6/7 %lu/%lu PUPDR6/7 %lu/%lu\n",
-             (RX_A_PORT->IDR & RX_A_PIN) ? "high" : "low", (RX_B_PORT->IDR & RX_B_PIN) ? "high" : "low",
-             (GPIOA->MODER >> 12) & 3U, (GPIOA->MODER >> 14) & 3U,
-             (GPIOA->AFR[0] >> 24) & 15U, (GPIOA->AFR[0] >> 28) & 15U,
-             (GPIOA->PUPDR >> 12) & 3U, (GPIOA->PUPDR >> 14) & 3U);
+  con_printf("pins (%s): ", RX_NAME);
+  print_pin_config("A", RX_A_PORT, RX_A_PIN);
+  con_puts("; ");
+  print_pin_config("B", RX_B_PORT, RX_B_PIN);
+  con_puts("\n");
   con_printf("edges: A %lu rising, B %lu rising, lost %lu\n",
              cap.ch[0].rises, cap.ch[1].rises, cap.overcaptures);
   con_printf("TIM3: CR1 %04lx CCMR1 %04lx CCER %04lx DIER %04lx SR %04lx OR1 %lx\n",

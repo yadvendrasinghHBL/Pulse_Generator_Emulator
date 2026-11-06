@@ -8,6 +8,7 @@
  * then document it in docs/USER_MANUAL.md.
  */
 #include "cli.h"
+#include "app.h"
 #include "board.h"
 #include "console.h"
 #include "diag.h"
@@ -260,11 +261,8 @@ static void cmd_dir(int argc, char **argv)
 }
 
 /* Ramp rates as stored (mm/s2), printed in m/s2 */
-static void print_accel(void)
+static void print_accel(uint32_t a, uint32_t d)
 {
-  uint32_t a = settings_accel_mm_s2();
-  uint32_t d = settings_decel_mm_s2();
-
   con_printf("accel %lu.%03lu m/s2, decel %lu.%03lu m/s2", a / 1000U, a % 1000U, d / 1000U, d % 1000U);
 }
 
@@ -275,7 +273,7 @@ static void print_speed_line(void)
   con_puts(" km/h, target ");
   print_fixed(speed_target_kmh(), 2);
   con_puts(" km/h, ");
-  print_accel();
+  print_accel(speed_accel_mm_s2(), speed_decel_mm_s2());
   con_printf(": %s, distance ", speed_ramping() ? "ramping"
              : (quad_state() == PULSE_RUNNING ? "steady" : "standstill"));
   print_fixed(speed_distance_m(), 3);
@@ -293,7 +291,7 @@ static void print_settings_line(void)
   con_printf("settings: %lu ppr, wheel %lu mm (", settings_ppr(), settings_wheel_mm());
   print_fixed(settings_m_per_pulse() * 1000.0, 3);
   con_printf(" mm per pulse, max %lu.%02lu km/h), ", max / 100U, max % 100U);
-  print_accel();
+  print_accel(settings_accel_mm_s2(), settings_decel_mm_s2());
   con_printf(", vmax %lu km/h, dir %s: %s\n", settings_vmax_kmh(), quad_dir() == QUAD_FWD ? "fwd" : "rev",
              settings_dirty() ? "not saved (type save)"
              : (settings_from_flash() ? "saved" : "defaults, nothing saved"));
@@ -302,6 +300,14 @@ static void print_settings_line(void)
 static void stop_first(const char *what)
 {
   con_printf("ERR stop first: %s only at standstill\n", what);
+}
+
+/* A flash erase stalls every interrupt for about 22 ms: the receiver would
+ * lose its time base and mis-measure a signal arriving on J8.2/J8.3 */
+static void receiving_error(void)
+{
+  con_puts("ERR receiver input active (edges on J8.2/J8.3): a flash save stalls the receiver for "
+           "about 22 ms. Stop the signal, then save\n");
 }
 
 static void cmd_speed(int argc, char **argv)
@@ -744,6 +750,10 @@ static void cmd_profile(int argc, char **argv)
       stop_first("the profile is saved");
       return;
     }
+    if (rx_signal_present()) {
+      receiving_error();
+      return;
+    }
     if (profile_save()) {
       con_puts("ERR flash write failed: profile not saved\n");
       return;
@@ -777,6 +787,10 @@ static void cmd_save(int argc, char **argv)
   }
   if (speed_moving()) {
     stop_first("settings are saved");   /* a page erase stalls the CPU for about 22 ms */
+    return;
+  }
+  if (rx_signal_present()) {
+    receiving_error();
     return;
   }
   if (settings_save()) {
@@ -843,12 +857,6 @@ static void print_phase(const rx_values_t *v)
   }
 }
 
-/* Wheel rpm from a speed, with the shared wheel diameter */
-static double kmh_to_rpm(double kmh)
-{
-  return kmh / 3.6 / (settings_m_per_pulse() * (double)settings_ppr()) * 60.0;
-}
-
 static void cmd_rx(int argc, char **argv)
 {
   rx_values_t v;
@@ -876,7 +884,7 @@ static void cmd_rx(int argc, char **argv)
   con_puts("\nspeed ");
   print_fixed(v.speed_kmh, 2);
   con_puts(" km/h (");
-  print_fixed(kmh_to_rpm(v.speed_kmh), 2);
+  print_fixed(speed_kmh_to_rpm(v.speed_kmh), 2);
   con_puts(" rpm), accel ");
   print_fixed(v.accel_ms2, 2);
   con_puts(" m/s2\ndistance ");
@@ -900,16 +908,8 @@ static void cmd_monitor(int argc, char **argv)
              RX_NAME, settings_ppr(), settings_wheel_mm(), RX_UPDATE_MS);
   con_puts("    km/h     rpm  m/s2      A Hz   A %      B Hz   B %  phase deg       dist m  status\n");
   rx_updated();
-  uint32_t beat = HAL_GetTick();
   while (!con_line_pending()) {
-    rx_poll();
-    speed_poll();
-    fault_poll();
-    profile_poll();
-    if (HAL_GetTick() - beat >= 500U) {
-      beat += 500U;
-      HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);
-    }
+    app_poll();
     if (!rx_updated()) {
       continue;
     }
@@ -917,7 +917,7 @@ static void cmd_monitor(int argc, char **argv)
     con_puts(" ");
     print_fixed(v.speed_kmh, 2);
     con_puts("  ");
-    print_fixed(kmh_to_rpm(v.speed_kmh), 2);
+    print_fixed(speed_kmh_to_rpm(v.speed_kmh), 2);
     con_puts("  ");
     print_fixed(v.accel_ms2, 2);
     for (int n = 0; n < 2; n++) {

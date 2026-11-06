@@ -80,7 +80,7 @@ Every reply that changes something starts with `OK`; errors start with `ERR` and
 | `accel`, `accel <m/s²>` | show / set the speed-up rate for `speed` and `rpm`, 0 … 50 m/s², up to 3 decimals. 0 = a higher speed applies at once. Also while moving |
 | `decel`, `decel <m/s²>` | show / set the slow-down rate for `speed`, `rpm` and `brake`, 0 … 50 m/s². 0 = a lower speed applies at once. Also while moving |
 | `vmax`, `vmax <km/h>` | show / set the speed limit for `speed` and `rpm`, 1 … 9999 km/h (default 600). `freq` is not limited. Also while moving: a train already above a new, lower limit keeps its speed until the next `speed` |
-| `save` | write ppr, wheel, accel, decel, vmax and direction to flash (loaded at power-up). Only at standstill |
+| `save` | write ppr, wheel, accel, decel, vmax and direction to flash (loaded at power-up). Only at standstill, and not while a signal arrives on J8.2/J8.3 (`ERR receiver input active`): the flash erase stalls the receiver for about 22 ms |
 | `defaults` | 200 ppr, 920 mm, accel 0, decel 0, vmax 600 km/h, forward. Applies at once, kept only after `save`. Only at standstill |
 | `rx` | receiver values once: status, frequency and duty of A and B, phase and direction, speed and wheel rpm, acceleration, distance, pulse count, lost edges |
 | `rx reset` | set the receiver distance and pulse count to 0 |
@@ -96,7 +96,7 @@ Engineering commands (`help all`):
 | `vdd` | measure VDDA (= Vdrive) and die temperature |
 | `led <green\|orange> <on\|off>` | set an LED (green is overwritten by the heartbeat within 0.5 s) |
 | `boot0` | read the BOOT0 pin level |
-| `inputs` | receiver diagnostics: raw levels of PA6/PA7, rising edges counted per input, TIM3 registers (use it when an input shows 0 Hz) |
+| `inputs` | receiver diagnostics: level, MODER/AF/PUPDR of each input pin, rising edges counted per input, TIM3 registers (use it when an input shows 0 Hz) |
 | `bootloader` | stop the output and jump to the ROM bootloader for UART flashing |
 
 Example:
@@ -187,6 +187,7 @@ exactly; against an external sensor the absolute error is that of HSI16 (about �
 | `freq`, `start` | set the frequency directly, no ramp; a running ramp is cancelled |
 | `stop`, `stop low` | stop at once; a running ramp is cancelled |
 | `accel 0` / `decel 0` during a ramp | jumps to the target speed |
+| `speed 50` after `brake`, `speed 0` or `stop` | the outputs go on **from the held levels**: no forced low, no false edge, pulse count kept (like a wheel that starts turning again). Only `start` begins fresh: all low, count 0 |
 | `speed 700` with vmax 600 | `ERR … max 600.00 km/h (vmax 600 km/h, …)`, nothing changes |
 
 Below 0.01 Hz (the timer limit) a ramp holds 0.01 Hz until the speed reaches 0. **Distance** in the speed
@@ -262,7 +263,7 @@ the same journey every time. Steps use the same speed model as the commands (acc
 | `speed <km/h>`, `rpm <n>` | new target speed; the ramp starts and the next step follows at once |
 | `reach` | wait until the target speed is reached |
 | `wait <s>` | wait 0.1 … 3600 s |
-| `accel <m/s²>`, `decel <m/s²>` | change the ramp rates (changes the settings in RAM; not saved) |
+| `accel <m/s²>`, `decel <m/s²>` | ramp rates for this run only; when the profile ends (done, stopped, failed) the `accel`/`decel` settings apply again. `speed` shows the rates in use |
 | `brake` | slow to standstill at decel (follow with `reach` to wait for the stop) |
 | `stop` | stop at once, levels held |
 | `dir fwd`, `dir rev` | change direction; only at standstill, else the profile fails |

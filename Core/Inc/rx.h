@@ -44,6 +44,7 @@ void        rx_poll(void);                 /* call from the main loop: recalcula
 int         rx_updated(void);              /* 1 once after each recalculation */
 void        rx_get(rx_values_t *out);
 void        rx_reset_distance(void);
+int         rx_signal_present(void);      /* 1 = an edge in the last 100 ms */
 const char *rx_status_name(rx_status_t s);
 void        rx_irq_handler(void);
 /* Raw diagnostics: pin levels, edges seen per channel, TIM3 registers */
