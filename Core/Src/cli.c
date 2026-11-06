@@ -12,6 +12,7 @@
 #include "console.h"
 #include "diag.h"
 #include "fault.h"
+#include "profile.h"
 #include "pulse.h"
 #include "quad.h"
 #include "rx.h"
@@ -150,6 +151,14 @@ static void print_count(const char *label, uint64_t n)
   }
 }
 
+/* A manual drive command takes over from a running profile */
+static void take_over(void)
+{
+  if (profile_abort()) {
+    con_puts("(profile stopped by a manual command)\n");
+  }
+}
+
 static void cmd_status(int argc, char **argv)
 {
   con_stats_t st;
@@ -193,6 +202,7 @@ static void cmd_freq(int argc, char **argv)
   }
   con_puts("OK ");
   print_freq_line();
+  take_over();
 }
 
 static void cmd_start(int argc, char **argv)
@@ -211,6 +221,7 @@ static void cmd_start(int argc, char **argv)
   con_puts("OK ");
   print_output_line();
   print_freq_line();
+  take_over();
 }
 
 static void cmd_stop(int argc, char **argv)
@@ -224,6 +235,7 @@ static void cmd_stop(int argc, char **argv)
   speed_stop(force_low);
   con_puts("OK ");
   print_output_line();
+  take_over();
 }
 
 static void cmd_dir(int argc, char **argv)
@@ -315,6 +327,7 @@ static void cmd_speed(int argc, char **argv)
   con_puts("OK ");
   print_speed_line();
   print_freq_line();
+  take_over();
 }
 
 /* Same as `speed`, in wheel turns per minute (rpm = f x 60 / ppr) */
@@ -341,6 +354,7 @@ static void cmd_rpm(int argc, char **argv)
   con_puts("OK ");
   print_speed_line();
   print_freq_line();
+  take_over();
 }
 
 static void cmd_ppr(int argc, char **argv)
@@ -542,6 +556,206 @@ static void cmd_fault(int argc, char **argv)
   fault_print();
 }
 
+/* One profile step in `profile add` syntax (the list prints the same text) */
+static void print_step(const profile_step_t *p)
+{
+  switch ((profile_op_t)p->op) {
+  case PROFILE_SPEED:
+    con_printf("speed %lu.%02lu", p->b / 100U, p->b % 100U);
+    break;
+  case PROFILE_RPM:
+    con_printf("rpm %lu.%02lu", p->b / 100U, p->b % 100U);
+    break;
+  case PROFILE_ACCEL:
+  case PROFILE_DECEL:
+    con_printf("%s %lu.%03lu", p->op == PROFILE_ACCEL ? "accel" : "decel", p->b / 1000U, p->b % 1000U);
+    break;
+  case PROFILE_BRAKE:
+    con_puts("brake");
+    break;
+  case PROFILE_STOP:
+    con_puts("stop");
+    break;
+  case PROFILE_DIR:
+    con_puts(p->a == (int16_t)QUAD_FWD ? "dir fwd" : "dir rev");
+    break;
+  case PROFILE_WAIT:
+    con_printf("wait %lu.%lu", p->b / 10U, p->b % 10U);
+    break;
+  case PROFILE_REACH:
+    con_puts("reach");
+    break;
+  case PROFILE_SLIP:
+    con_printf("slip %s%d %lu.%lu", p->a > 0 ? "+" : "", p->a, p->b / 10U, p->b % 10U);
+    break;
+  default:
+    con_puts("?");
+    break;
+  }
+}
+
+/* Parse a step from argv (argv[0] = step name). 0 = OK */
+static int parse_step(int argc, char **argv, profile_step_t *p)
+{
+  uint32_t v;
+  const char *op = argv[0];
+
+  memset(p, 0, sizeof(*p));
+  if (argc == 1) {
+    if (strcmp(op, "brake") == 0) {
+      p->op = PROFILE_BRAKE;
+    } else if (strcmp(op, "stop") == 0) {
+      p->op = PROFILE_STOP;
+    } else if (strcmp(op, "reach") == 0) {
+      p->op = PROFILE_REACH;
+    } else {
+      return -1;
+    }
+    return 0;
+  }
+  if (argc == 2) {
+    if (strcmp(op, "speed") == 0 && parse_fixed(argv[1], 2, 99999999U, &v) == 0) {
+      p->op = PROFILE_SPEED;
+    } else if (strcmp(op, "rpm") == 0 && parse_fixed(argv[1], 2, 99999999U, &v) == 0) {
+      p->op = PROFILE_RPM;
+    } else if (strcmp(op, "accel") == 0 && parse_fixed(argv[1], 3, SETTINGS_ACCEL_MAX_MM_S2, &v) == 0) {
+      p->op = PROFILE_ACCEL;
+    } else if (strcmp(op, "decel") == 0 && parse_fixed(argv[1], 3, SETTINGS_ACCEL_MAX_MM_S2, &v) == 0) {
+      p->op = PROFILE_DECEL;
+    } else if (strcmp(op, "wait") == 0 && parse_fixed(argv[1], 1, PROFILE_WAIT_MAX_DS, &v) == 0 && v > 0U) {
+      p->op = PROFILE_WAIT;
+    } else if (strcmp(op, "dir") == 0 && (strcmp(argv[1], "fwd") == 0 || strcmp(argv[1], "rev") == 0)) {
+      p->op = PROFILE_DIR;
+      p->a = (int16_t)(strcmp(argv[1], "fwd") == 0 ? QUAD_FWD : QUAD_REV);
+      return 0;
+    } else {
+      return -1;
+    }
+    p->b = v;
+    return 0;
+  }
+  if (argc == 3 && strcmp(op, "slip") == 0) {
+    const char *s = argv[1];
+    int neg = *s == '-';
+    uint32_t ds;
+
+    if (*s == '-' || *s == '+') {
+      s++;
+    }
+    if (parse_fixed(s, 0, (uint32_t)SPEED_SLIP_MAX, &v) || v == 0U || (neg && v > (uint32_t)-SPEED_SLIP_MIN) ||
+        parse_fixed(argv[2], 1, 6000U, &ds) || ds == 0U) {
+      return -1;
+    }
+    p->op = PROFILE_SLIP;
+    p->a = (int16_t)(neg ? -(int32_t)v : (int32_t)v);
+    p->b = ds;
+    return 0;
+  }
+  return -1;
+}
+
+static void print_profile(void)
+{
+  static const char *const names[] = {"ready", "running", "done", "stopped", "FAILED"};
+  profile_state_t st = profile_state();
+
+  con_printf("profile: %lu of %u steps, %s, %s", profile_count(), PROFILE_MAX_STEPS,
+             profile_saved() ? "saved" : "not saved (type profile save)", names[st]);
+  if (st == PROFILE_RUNNING) {
+    uint32_t ms = profile_wait_left_ms();
+
+    con_printf(" step %lu", profile_current());
+    if (ms) {
+      con_printf(" (%lu.%lu s left)", ms / 1000U, ms % 1000U / 100U);
+    }
+    if (profile_passes() == 0U) {
+      con_printf(", pass %lu (loop)", profile_pass());
+    } else {
+      con_printf(", pass %lu of %lu", profile_pass(), profile_passes());
+    }
+  } else if (st == PROFILE_FAILED) {
+    con_printf(" at step %lu (out of range now, or dir while moving)", profile_current());
+  }
+  con_puts("\n");
+  for (uint32_t n = 1; n <= profile_count(); n++) {
+    con_printf("%c%2lu ", st == PROFILE_RUNNING && n == profile_current() ? '>' : ' ', n);
+    print_step(profile_step(n));
+    con_puts("\n");
+  }
+}
+
+static void profile_usage(void)
+{
+  con_puts("ERR usage: profile | profile add <step> | profile del <n> | profile clear | profile demo\n"
+           "  | profile run [times] | profile loop | profile stop | profile save\n"
+           "  steps: speed <km/h> | rpm <n> | accel <m/s2> | decel <m/s2> | brake | stop | dir <fwd|rev>\n"
+           "         | wait <s> | reach | slip <%> <s>\n");
+}
+
+/* Drive profiles: a stored journey the board plays back by itself */
+static void cmd_profile(int argc, char **argv)
+{
+  uint32_t n = 0;
+  const char *sub = argc > 1 ? argv[1] : "";
+
+  if (argc == 1) {
+    print_profile();
+    return;
+  }
+  if (strcmp(sub, "add") == 0 && argc >= 3) {
+    profile_step_t p;
+
+    if (parse_step(argc - 2, &argv[2], &p)) {
+      profile_usage();
+      return;
+    }
+    if (profile_add(&p)) {
+      con_printf("ERR profile full (%u steps) or running\n", PROFILE_MAX_STEPS);
+      return;
+    }
+  } else if (strcmp(sub, "del") == 0 && argc == 3) {
+    if (parse_fixed(argv[2], 0, PROFILE_MAX_STEPS, &n) || profile_del(n)) {
+      con_puts("ERR no such step, or the profile is running\n");
+      return;
+    }
+  } else if (strcmp(sub, "clear") == 0 && argc == 2) {
+    if (profile_clear()) {
+      con_puts("ERR profile running: profile stop first\n");
+      return;
+    }
+  } else if (strcmp(sub, "demo") == 0 && argc == 2) {
+    profile_demo();
+  } else if ((strcmp(sub, "run") == 0 && (argc == 2 || argc == 3)) || (strcmp(sub, "loop") == 0 && argc == 2)) {
+    n = 1;
+    if (strcmp(sub, "loop") == 0) {
+      n = 0;
+    } else if (argc == 3 && (parse_fixed(argv[2], 0, 10000U, &n) || n == 0U)) {
+      profile_usage();
+      return;
+    }
+    if (profile_run(n)) {
+      con_puts("ERR profile empty: profile add <step> or profile demo\n");
+      return;
+    }
+  } else if (strcmp(sub, "stop") == 0 && argc == 2) {
+    profile_abort();
+  } else if (strcmp(sub, "save") == 0 && argc == 2) {
+    if (speed_moving() || profile_state() == PROFILE_RUNNING) {
+      stop_first("the profile is saved");
+      return;
+    }
+    if (profile_save()) {
+      con_puts("ERR flash write failed: profile not saved\n");
+      return;
+    }
+  } else {
+    profile_usage();
+    return;
+  }
+  con_puts("OK ");
+  print_profile();
+}
+
 /* Service brake: slow to standstill at decel, levels held at the end */
 static void cmd_brake(int argc, char **argv)
 {
@@ -552,6 +766,7 @@ static void cmd_brake(int argc, char **argv)
   speed_brake();
   con_puts("OK ");
   print_speed_line();
+  take_over();
 }
 
 static void cmd_save(int argc, char **argv)
@@ -690,6 +905,7 @@ static void cmd_monitor(int argc, char **argv)
     rx_poll();
     speed_poll();
     fault_poll();
+    profile_poll();
     if (HAL_GetTick() - beat >= 500U) {
       beat += 500U;
       HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);
@@ -826,6 +1042,7 @@ static const cli_cmd_t commands[] = {
   { "rpm",        "rpm | rpm <n>: drive at a wheel rpm, ramps at accel/decel", cmd_rpm,  0 },
   { "brake",      "brake to standstill at decel, then hold the levels",  cmd_brake,      0 },
   { "fault",      "fault | fault clear | a/b stuck, phase, glitch, drop, slip (see manual)", cmd_fault, 0 },
+  { "profile",    "profile | add/del/clear/demo/run/loop/stop/save: drive profiles", cmd_profile, 0 },
   { "ppr",        "ppr | ppr <n>: pulses per turn, 1..1000 (stopped)",   cmd_ppr,        0 },
   { "wheel",      "wheel | wheel <mm>: wheel diameter, 100..2000 (stopped)", cmd_wheel,  0 },
   { "accel",      "accel | accel <m/s2>: speed-up rate, 0..50, 0 = at once", cmd_accel,  0 },

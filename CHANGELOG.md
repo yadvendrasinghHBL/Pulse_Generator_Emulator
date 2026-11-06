@@ -16,6 +16,10 @@ A GitHub release is created from the section of the tagged version.
   `accel <m/s²>` (0 = at once); `speed 0` brakes to standstill and holds the levels. Settings `ppr`
   (1–1000) and `wheel` (100–2000 mm), shared with the receiver; `save` keeps ppr, wheel, accel and
   direction in the last flash page, `defaults` restores 200 ppr / 920 mm / 0 / forward.
+- Drive profiles, command `profile`: up to 32 steps (`speed`, `rpm`, `accel`, `decel`, `brake`, `stop`,
+  `dir`, `wait`, `reach`, `slip`), `run [n]`, `loop`, `stop`, `demo`, `save` (own flash page 0x0803F000,
+  loaded at power-up, never starts by itself); a manual drive command stops a running profile.
+- Firmware image limit 252 KB (was 254 KB): the second-last flash page holds the profile.
 - Sensor fault emulation, command `fault`: stuck channel (`fault a low|high|ok`), phase error
   (`fault phase 0..134|ok`), glitches (`fault glitch a|b|ab <per s> [µs]`), dropped pulses
   (`fault drop a|b|ab <1 in n>`), wheel slip/slide (`fault slip <%> <s>`), `fault clear`; shown in `status`.

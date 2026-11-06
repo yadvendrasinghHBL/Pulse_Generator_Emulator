@@ -16,6 +16,7 @@
 #include "console.h"
 #include "diag.h"
 #include "fault.h"
+#include "profile.h"
 #include "pulse.h"
 #include "quad.h"
 #include "rx.h"
@@ -116,6 +117,7 @@ int main(void)
   pulse_init();
   quad_init();
   settings_init();               /* after quad_init: applies the saved direction */
+  profile_init();                /* loads the saved profile; it never runs by itself */
   rx_init();
 
   HAL_Delay(BANNER_DELAY_MS);
@@ -129,6 +131,8 @@ int main(void)
              settings_ppr(), settings_wheel_mm(), settings_accel_mm_s2() / 1000U,
              settings_accel_mm_s2() % 1000U, settings_decel_mm_s2() / 1000U,
              settings_decel_mm_s2() % 1000U, settings_vmax_kmh(), quad_dir() == QUAD_FWD ? "fwd" : "rev");
+  con_printf("Profile: %lu steps%s (type profile)\n", profile_count(),
+             profile_saved() ? " from flash" : "");
   con_printf("Outputs %s and %s: off. Type 'start' to begin, 'help' for commands.\n",
              PULSE1_NAME, QUAD_NAME);
   cli_prompt();
@@ -145,6 +149,7 @@ int main(void)
     rx_poll();
     speed_poll();
     fault_poll();
+    profile_poll();
     if (HAL_GetTick() - last_beat >= 500U) {
       last_beat += 500U;
       HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);

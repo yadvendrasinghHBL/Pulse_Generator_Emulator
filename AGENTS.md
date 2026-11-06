@@ -52,6 +52,7 @@ Core/Src/rx.c             receiver: TIM3 input capture on PA6/PA7 (J8.2/J8.3), s
 Core/Src/speed.c          speed model: speed/rpm -> frequency, accel/decel ramps, brake, wheel slip
 Core/Src/settings.c       ppr, wheel, accel, decel, vmax, dir in the last flash page (CRC records)
 Core/Src/fault.c          sensor fault emulation: glitch scheduling, `fault` status line
+Core/Src/profile.c        drive profiles: step player and flash storage (page 0x0803F000)
 Core/Src/console.c        USART1 115200 8N1, IRQ RX ring buffer, blocking TX
 Core/Src/cli.c            command shell; `commands[]` is the command list (`help all` prints it)
 Core/Src/diag.c           IDs, VREFINT/temp ADC, POST, BOOT0 readback
@@ -60,7 +61,7 @@ Core/Src/stm32l4xx_it.c   exception + IRQ handlers (TIM2, USART1); faults stop t
 Core/Inc/stm32l4xx_hal_conf.h   enabled HAL modules
 Core/Startup/, Core/Src/system_stm32l4xx.c   ST files (copied by vendor script)
 Drivers/                  vendored CMSIS + HAL subset: DO NOT EDIT, re-run tools/vendor_cube.sh
-STM32L451RCTX_FLASH.ld    256K flash (last 2 KB page reserved for stage 2 settings) / 160K RAM
+STM32L451RCTX_FLASH.ld    256K flash (last two 2 KB pages reserved: profile, settings) / 160K RAM
 tools/                    build_all, build_and_flash, con_send, pulse_test, debug (+gdb/), vendor_cube, udev/
 .zed/                     Zed tasks and clangd settings
 .github/workflows/build.yml   CI: build_all.sh on every push; tag v<FW_VERSION> -> GitHub release
@@ -86,7 +87,7 @@ peripheral. Do not generate CubeMX code into this tree.
   request from the user in the current conversation. RDP level 2 permanently bricks debug access.
 - Nothing is driven on J8 at boot. The pulse output starts only on `start`. Faults stop the timer.
 - Keep `board_hold_att_latch()` first in `main()`: the unused attenuators' LE (PB6) has no pull-down.
-- The last flash page (0x0803F800) is reserved for settings; the linker script keeps ROM at 254K.
+- The last two flash pages are reserved: 0x0803F000 drive profile, 0x0803F800 settings; the linker script keeps ROM at 252K.
 - **Open the FT231X port with DTR off**, always: pyserial `dtr=False` *before* `open()`, picocom
   `--lower-dtr`, STM32_Programmer_CLI `dtr=low`. DTR on holds the MCU in reset (HARDWARE.md finding 3).
 

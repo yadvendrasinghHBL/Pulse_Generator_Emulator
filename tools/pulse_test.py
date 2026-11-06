@@ -466,6 +466,118 @@ def fault_checks(b):
     b.cmd("stop low")
 
 
+def parse_profile(r):
+    """Header and steps of a `profile` listing, or None."""
+    m = re.search(r"^(?:OK )?profile: (\d+) of \d+ steps, (saved|not saved[^,]*), (\w+)(.*)$", r, re.M)
+    if not m:
+        return None
+    steps = [x.group(2).strip() for x in re.finditer(r"^[ >]\s*(\d+) (.+)$", r, re.M)]
+    return {"count": int(m.group(1)), "saved": m.group(2) == "saved", "state": m.group(3), "rest": m.group(4),
+            "steps": steps}
+
+
+def profile_checks(b):
+    """Drive profiles: build, run, repeat, loop/stop, manual take-over, failure, save/reset.
+    Leaves the saved profile as it found it."""
+    b.cmd("stop low")
+    b.cmd("fault clear")
+    for c in ("dir fwd", "accel 0", "decel 0", "vmax 600"):
+        b.cmd(c)
+    orig = parse_profile(b.cmd("profile"))
+    check(orig is not None, "profile listing parses", str(orig))
+    if orig is None:
+        return
+    r = b.cmd("profile clear")
+    check(parse_profile(r)["count"] == 0, "profile clear -> 0 steps")
+    for bad in ("profile add fly", "profile add speed abc", "profile add wait 0", "profile add wait 3600.1",
+                "profile add slip 20", "profile add dir up", "profile del 1", "profile run", "profile run 0"):
+        check(b.cmd(bad).startswith("ERR"), f"{bad} rejected")
+
+    journey = ["accel 10.000", "decel 10.000", "speed 36.00", "reach", "wait 2.0", "brake", "reach"]
+    for st in journey:
+        b.cmd(f"profile add {st}")
+    pr = parse_profile(b.cmd("profile"))
+    check(pr["steps"] == journey, "profile lists the steps in add syntax", str(pr["steps"]))
+
+    # one pass: 0 -> 36 km/h in 1 s, 2 s steady, brake to 0 in 1 s
+    r = b.cmd("profile run")
+    t0 = b.sent_at
+    check(r.startswith("OK profile:") and "running step 4" in r, "profile run starts, waits at reach", r.split("\n")[0])
+    sleep_until(t0 + 1.5)
+    pr = parse_profile(b.cmd("profile"))
+    s = parse_speed(b.cmd("speed"))
+    check(pr["state"] == "running" and "step 5" in pr["rest"] and s["now"] == 36.0,
+          "after 1.5 s: wait step, steady 36 km/h", f"{pr['state']}{pr['rest']}, {s['now']} km/h")
+    sleep_until(t0 + 2.7)                            # receiver window (0.5 s) clear of the ramp
+    v = parse_rx(b.cmd("rx"))
+    if v is not None and v["fa"] > 0:
+        check(abs(v["speed"] - 36) < 0.3, "receiver follows the profile (loopback)", f"{v['speed']} km/h")
+    sleep_until(t0 + 4.7)
+    pr = parse_profile(b.cmd("profile"))
+    s = parse_speed(b.cmd("speed"))
+    check(pr["state"] == "done" and s["state"] == "standstill", "profile done after about 4 s, standstill",
+          f"{pr['state']}, {s['state']}")
+
+    # two passes
+    b.cmd("profile run 2")
+    t0 = b.sent_at
+    sleep_until(t0 + 4.6)
+    pr = parse_profile(b.cmd("profile"))
+    check(pr["state"] == "running" and "pass 2 of 2" in pr["rest"], "profile run 2: second pass", pr["rest"])
+    sleep_until(t0 + 8.9)
+    pr = parse_profile(b.cmd("profile"))
+    check(pr["state"] == "done", "profile run 2: done after two passes", pr["state"])
+
+    # loop, then profile stop; manual command takes over
+    b.cmd("profile loop")
+    time.sleep(0.5)
+    pr = parse_profile(b.cmd("profile stop"))
+    check(pr["state"] == "stopped", "profile loop, then profile stop", pr["state"])
+    b.cmd("stop low")
+    b.cmd("profile run")
+    time.sleep(0.3)
+    r = b.cmd("speed 0")
+    check("(profile stopped by a manual command)" in r and parse_profile(b.cmd("profile"))["state"] == "stopped",
+          "manual speed command stops a running profile")
+    b.cmd("stop low")
+
+    # a step that cannot run
+    b.cmd("profile clear")
+    b.cmd("profile add speed 700")
+    pr = parse_profile(b.cmd("profile run"))
+    check(pr["state"] == "FAILED" and "step 1" in pr["rest"], "profile with speed 700 > vmax fails at step 1",
+          f"{pr['state']}{pr['rest']}")
+    b.cmd("stop low")
+
+    pr = parse_profile(b.cmd("profile demo"))
+    check(pr["count"] == 11 and pr["steps"][2] == "speed 100.00", "profile demo: 11 steps, speed 100", str(pr["steps"]))
+
+    # save, reset, reload; it must not run by itself
+    b.cmd("profile clear")
+    for st in ("speed 50.00", "wait 2.5", "brake"):
+        b.cmd(f"profile add {st}")
+    r = b.cmd("profile save")
+    check(r.startswith("OK profile:") and parse_profile(r)["saved"], "profile save", r.split("\n")[0])
+    b.cmd("reset")
+    if not wait_for_prompt(b.port):
+        check(False, "board answers after reset")
+        return
+    pr = parse_profile(b.cmd("profile"))
+    st = b.cmd("status")
+    check(pr["steps"] == ["speed 50.00", "wait 2.5", "brake"] and pr["saved"] and pr["state"] == "ready"
+          and "outputs A J8.6 (PB0) / B J8.7 (PB1), TIM1: off" in st,
+          "profile loaded from flash after reset, not running, outputs off", str(pr))
+
+    b.cmd("profile clear")
+    for st in orig["steps"]:
+        b.cmd(f"profile add {st}")
+    r = b.cmd("profile save")
+    pr = parse_profile(r)
+    check(r.startswith("OK profile:") and pr["steps"] == orig["steps"], "original profile saved back",
+          f"{pr['count']} steps")
+    b.cmd("stop low")
+
+
 def main():
     path = os.environ.get("PORT", "/dev/ttyUSB0")
     if not os.path.exists(path):
@@ -536,6 +648,7 @@ def main():
         speed_checks(b)
         receiver_checks(b)
         fault_checks(b)
+        profile_checks(b)
 
     failed = results.count(False)
     print(f"\n{'ALL CHECKS PASSED' if not failed else f'FAILED: {failed} of {len(results)} checks'}"

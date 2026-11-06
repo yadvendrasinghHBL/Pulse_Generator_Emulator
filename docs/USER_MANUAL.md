@@ -70,6 +70,7 @@ Every reply that changes something starts with `OK`; errors start with `ERR` and
 | `dir fwd`, `dir rev` | forward: A leads B by 90°; reverse: B leads A. Only while stopped (`ERR stop first` otherwise): a real wheel changes direction only at standstill |
 | `speed` | show the speed now, the target, accel and decel, the state (`ramping`, `steady`, `standstill`), the distance since start and the output frequency |
 | `speed <km/h>` | drive at this speed, 0 … `vmax` (default 600 km/h; never above 50 kHz, which is 2601 km/h at 200 ppr, 920 mm), up to 2 decimals. Starts the outputs from standstill if needed. The speed rises at `accel` and falls at `decel` (0 = at once); `speed 0` slows to standstill and stops the outputs (levels held). See 4c |
+| `profile` … | drive profiles: a stored journey the board plays back by itself. See 4e |
 | `fault` … | sensor fault emulation on A/B: stuck channel, phase error, glitches, dropped pulses, wheel slip/slide. See 4d |
 | `brake` | slow to standstill at `decel`, then stop with the levels held (same as `speed 0`). With decel 0 it stops at once. `stop` always stops at once |
 | `rpm` | same as `speed`; the second line shows the wheel rpm now and the target |
@@ -240,6 +241,56 @@ Notes: during a slip the speed model (`speed`) keeps the train speed; only the w
 frequency and the receiver, change. A dropped A pulse is also missing from the receiver's distance. The
 emulator's own pulse count (`status`, distance in `speed`) counts the healthy sequence.
 
+## 4e. Drive profiles
+
+A profile is a list of up to 32 steps that the board plays back by itself, so a receiver sees exactly
+the same journey every time. Steps use the same speed model as the commands (accel/decel ramps, vmax).
+
+| Command | What it does |
+|---|---|
+| `profile` | list the steps (in `profile add` syntax) and the state: `ready`, `running step n (… s left), pass p of q`, `done`, `stopped`, `FAILED at step n` |
+| `profile add <step>` | append a step (see below) |
+| `profile del <n>`, `profile clear` | remove step n / all steps (not while running) |
+| `profile demo` | load the demo journey (below) |
+| `profile run`, `profile run <n>` | play once / n times |
+| `profile loop` | play again and again until `profile stop` |
+| `profile stop` | stop playing; the train keeps its current speed (use `brake` or `stop`) |
+| `profile save` | keep the profile in flash; loaded at power-up, but it never starts by itself. Only at standstill |
+
+| Step | Meaning |
+|---|---|
+| `speed <km/h>`, `rpm <n>` | new target speed; the ramp starts and the next step follows at once |
+| `reach` | wait until the target speed is reached |
+| `wait <s>` | wait 0.1 … 3600 s |
+| `accel <m/s²>`, `decel <m/s²>` | change the ramp rates (changes the settings in RAM; not saved) |
+| `brake` | slow to standstill at decel (follow with `reach` to wait for the stop) |
+| `stop` | stop at once, levels held |
+| `dir fwd`, `dir rev` | change direction; only at standstill, else the profile fails |
+| `slip <%> <s>` | wheel slip/slide, as `fault slip` |
+
+A manual `speed`, `rpm`, `brake`, `freq`, `start` or `stop` stops a running profile (the reply ends with
+`(profile stopped by a manual command)`). A step that cannot run (a speed above `vmax`, `dir` while moving)
+stops it as `FAILED at step n`.
+
+The demo journey (`profile demo`, then `profile run`): about 2 min 10 s.
+
+```
+  1 accel 1.000        0 -> 100 km/h at 1 m/s2: 27.8 s
+  2 decel 0.800
+  3 speed 100.00
+  4 reach
+  5 wait 30.0          30 s at 100 km/h (1922 Hz)
+  6 speed 50.00        100 -> 50 km/h at 0.8 m/s2: 17.4 s
+  7 reach
+  8 wait 20.0
+  9 decel 1.000
+ 10 brake              50 -> 0 km/h at 1 m/s2: 13.9 s
+ 11 reach
+```
+
+Watch it with `monitor`, or on the scope with the Freq measurement. Profiles are stored in their own flash
+page (0x0803F000, 7 saves before the page is erased).
+
 ## 5. Test the board
 
 ```bash
@@ -252,7 +303,7 @@ both directions (at 0.5 Hz, from the pin levels). With the loopback wires fitted
 receiver (frequency, duty, phase 90°/270°, speed, distance up/down, 1 Hz, standstill, `monitor`); without
 them these checks are skipped. Stage 3 checks: rejected settings, `speed 100` → 1922.16 Hz, a 5 m/s² ramp
 to 36 km/h and back to standstill, `ppr`/`save` refused while moving, and `save` → `reset` → settings
-loaded from flash. Fault checks: every `fault` is made and, with the loopback wires, detected by the receiver. Receiver checks also run at 10 kHz and 50 kHz (frequency, duty, phase, speed, no lost edges). The test
+loaded from flash. Profile checks: build, run once and twice, loop/stop, manual take-over, a failing step, save → reset → reload (your saved profile is put back). Fault checks: every `fault` is made and, with the loopback wires, detected by the receiver. Receiver checks also run at 10 kHz and 50 kHz (frequency, duty, phase, speed, no lost edges). The test
 saves your original ppr, wheel, accel, decel, vmax and direction back at the end. It ends with all outputs stopped and low. The absolute
 frequency, the 90° phase and the waveform need a scope (`docs/MANUAL_TEST.md`; ground on J6 pin 2).
 

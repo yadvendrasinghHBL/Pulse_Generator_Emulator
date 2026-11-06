@@ -12,8 +12,9 @@ _Min_Stack_Size = 0x1000;
 MEMORY
 {
   RAM (xrw) : ORIGIN = 0x20000000, LENGTH = 160K
-  /* Last 2 KB page (0x0803F800) is reserved for user settings (stage 2, PLAN.md) */
-  ROM (rx)  : ORIGIN = 0x08000000, LENGTH = 254K
+  /* Last two 2 KB pages are kept out of the image: 0x0803F000 drive profile
+   * (profile.c), 0x0803F800 settings (settings.c) */
+  ROM (rx)  : ORIGIN = 0x08000000, LENGTH = 252K
 }
 
 SECTIONS

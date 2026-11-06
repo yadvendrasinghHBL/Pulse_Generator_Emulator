@@ -48,6 +48,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (68/68 with loopback); scope check 3.4 open** (decided by the user 2026-11-06: ramp to target, explicit `save`, settings shared with the receiver) |
 | 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | **FW 0.3.0: automatic tests pass on board 1 (loopback); live/fault check open** |
 | 3b | Sensor fault emulation (`fault`): stuck channel, phase error, glitches, dropped pulses, wheel slip/slide, so a receiver's fault detection can be tested | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (117/117 with loopback)**; scope check open |
+| 3c | Drive profiles (`profile`): stored journeys of up to 32 steps, played back by the board (run, run n, loop), saved in flash page 0x0803F000 | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (142/142 with loopback)** |
 | 5 | PC display for the receiver | PC tool | not planned (Q6: console `monitor` only) |
 | 6 | Interface hardware (add-on board): isolated open-drain outputs (opto + MOSFET) and isolated, level-shifting inputs for a real 10–30 V OPG; ground from J6.2 | add-on board | open |
 
@@ -210,3 +211,11 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   2000 Hz; phase 100 -> OK; drop a 10 -> A 900.0 Hz; drop b 4 -> B 750.0 Hz; glitch a 100 -> A 1100.0 Hz;
   slip 20 -> receiver 119.98 km/h while the model shows 100; slide -30 -> 70.0 km/h.
   Not verified on a scope: glitch width and shape.
+- 2026-11-06: Drive profiles (user chose option B): `profile.c` (step player in the main loop, steps `speed`,
+  `rpm`, `accel`, `decel`, `brake`, `stop`, `dir`, `wait`, `reach`, `slip`; record log in its own page
+  0x0803F000, 272-byte CRC records, 7 per page), `profile` command, demo journey; a manual drive command
+  stops a running profile. Linker ROM 254K -> 252K (image 45.6 KB). Board 1, loopback: first run 141/142
+  (the receiver read 35.6 km/h 0.9 s after the ramp ended: test timing, its 0.5 s window reached back into
+  the ramp; wait step now 2 s), second run ALL CHECKS PASSED (142/142): one pass 0 -> 36 km/h -> 0 in
+  about 4 s with the receiver at 36.0 km/h, two passes, loop + stop, manual take-over, `speed 700` step
+  FAILED at step 1, save -> reset -> loaded and not running.
