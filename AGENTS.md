@@ -47,6 +47,11 @@ successful build. Never claim on-target or scope results you did not observe.
 Core/Inc/board.h          single source of truth for pins (from the netlist)
 Core/Src/main.c           clock tree (HSI16->PLL 80 MHz), init order, main loop, attenuator LE hold
 Core/Src/pulse.c          pulse output: TIM2_CH1 toggle mode on PA5 (J8.1), frequency, start/stop, count
+Core/Src/quad.c           A/B outputs 90° apart: TIM1_CH2N/CH3N toggle mode on PB0/PB1 (J8.6/J8.7), sensor faults
+Core/Src/rx.c             receiver: TIM3 input capture on PA6/PA7 (J8.2/J8.3), speed, phase, faults
+Core/Src/speed.c          speed model: speed/rpm -> frequency, accel/decel ramps, brake, wheel slip
+Core/Src/settings.c       ppr, wheel, accel, decel, vmax, dir in the last flash page (CRC records)
+Core/Src/fault.c          sensor fault emulation: glitch scheduling, `fault` status line
 Core/Src/console.c        USART1 115200 8N1, IRQ RX ring buffer, blocking TX
 Core/Src/cli.c            command shell; `commands[]` is the command list (`help all` prints it)
 Core/Src/diag.c           IDs, VREFINT/temp ADC, POST, BOOT0 readback

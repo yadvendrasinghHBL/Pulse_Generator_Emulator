@@ -70,6 +70,7 @@ Every reply that changes something starts with `OK`; errors start with `ERR` and
 | `dir fwd`, `dir rev` | forward: A leads B by 90°; reverse: B leads A. Only while stopped (`ERR stop first` otherwise): a real wheel changes direction only at standstill |
 | `speed` | show the speed now, the target, accel and decel, the state (`ramping`, `steady`, `standstill`), the distance since start and the output frequency |
 | `speed <km/h>` | drive at this speed, 0 … `vmax` (default 600 km/h; never above 50 kHz, which is 2601 km/h at 200 ppr, 920 mm), up to 2 decimals. Starts the outputs from standstill if needed. The speed rises at `accel` and falls at `decel` (0 = at once); `speed 0` slows to standstill and stops the outputs (levels held). See 4c |
+| `fault` … | sensor fault emulation on A/B: stuck channel, phase error, glitches, dropped pulses, wheel slip/slide. See 4d |
 | `brake` | slow to standstill at `decel`, then stop with the levels held (same as `speed 0`). With decel 0 it stops at once. `stop` always stops at once |
 | `rpm` | same as `speed`; the second line shows the wheel rpm now and the target |
 | `rpm <n>` | drive at a wheel speed in turns per minute, up to 2 decimals, like `speed` (same ramp, start and stop rules). rpm = f × 60 / ppr: 500 rpm at 200 ppr = 1666.7 Hz = 86.71 km/h with a 920 mm wheel. Maximum 50 kHz × 60 / ppr (15000 rpm at 200 ppr) |
@@ -207,6 +208,38 @@ ERR stop first: settings are saved only at standstill
 only after 64 saves. At power-up the last valid record is loaded (CRC checked); without one the defaults
 apply. The banner shows `Settings from flash` or `Settings defaults (nothing saved)`.
 
+## 4d. Sensor fault emulation
+
+`fault` makes the A/B outputs look like a failing optical pulse generator, so you can test whether a
+receiver detects the fault. Faults stay on until `fault clear` (also across `stop` / `start`), are not saved,
+and are off after a reset. `fault` alone, and `status`, show what is active.
+
+| Command | Fault | What a receiver should see (our `rx` in loopback, at 1000 Hz) |
+|---|---|---|
+| `fault a low`, `fault a high` (also `b`) | channel dead: output stuck low or high | `FAULT A missing` after 2 s |
+| `fault a ok` | channel healthy again, back in step with the other one | `OK`, 90° |
+| `fault phase <0..134>` | phase between A and B wrong (damaged disc, misaligned sensor); kept through `freq`/`speed` changes | `fault phase 45` → 45°, `FAULT phase`; `fault phase 100` → 100°, still `OK` (90° ± 20°) |
+| `fault phase ok` | back to 90° | 90° |
+| `fault drop <a\|b\|ab> <n>` | 1 pulse missing in every n (dirty disc slot) | `fault drop a 10` → A 900 Hz, B 1000 Hz |
+| `fault glitch <a\|b\|ab> <per s> [µs]` | short opposite pulses (electrical noise), 1–1000 per second, 1–50 µs wide (default 2 µs), never on a real edge | `fault glitch a 100` → A 1100 Hz (each glitch adds one rising edge) |
+| `fault slip <%> <s>` | wheel slip (+, traction) or slide (−, braking) for that time: the wheel turns faster or slower than the train moves. −90 … +200 %, 0.1 … 600 s, only while moving | at 100 km/h, `fault slip 20 3` → 120 km/h for 3 s; `fault slip -30 5` → 70 km/h |
+| `fault drop off`, `fault glitch off`, `fault slip off` | that fault off | |
+| `fault clear` | all faults off: a healthy sensor | |
+
+```
+> speed 100
+> fault phase 45
+OK faults: A ok, B ok, phase 45 deg, glitch off, drop off, slip off
+> rx
+receiver A J8.2 (PA6) / B J8.3 (PA7), TIM3, 200 ppr, wheel 920 mm: FAULT phase
+...
+phase 45.0 deg forward
+```
+
+Notes: during a slip the speed model (`speed`) keeps the train speed; only the wheel, and so the
+frequency and the receiver, change. A dropped A pulse is also missing from the receiver's distance. The
+emulator's own pulse count (`status`, distance in `speed`) counts the healthy sequence.
+
 ## 5. Test the board
 
 ```bash
@@ -219,7 +252,7 @@ both directions (at 0.5 Hz, from the pin levels). With the loopback wires fitted
 receiver (frequency, duty, phase 90°/270°, speed, distance up/down, 1 Hz, standstill, `monitor`); without
 them these checks are skipped. Stage 3 checks: rejected settings, `speed 100` → 1922.16 Hz, a 5 m/s² ramp
 to 36 km/h and back to standstill, `ppr`/`save` refused while moving, and `save` → `reset` → settings
-loaded from flash. Receiver checks also run at 10 kHz and 50 kHz (frequency, duty, phase, speed, no lost edges). The test
+loaded from flash. Fault checks: every `fault` is made and, with the loopback wires, detected by the receiver. Receiver checks also run at 10 kHz and 50 kHz (frequency, duty, phase, speed, no lost edges). The test
 saves your original ppr, wheel, accel, decel, vmax and direction back at the end. It ends with all outputs stopped and low. The absolute
 frequency, the 90° phase and the waveform need a scope (`docs/MANUAL_TEST.md`; ground on J6 pin 2).
 

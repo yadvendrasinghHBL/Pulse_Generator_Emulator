@@ -16,6 +16,10 @@ A GitHub release is created from the section of the tagged version.
   `accel <m/s²>` (0 = at once); `speed 0` brakes to standstill and holds the levels. Settings `ppr`
   (1–1000) and `wheel` (100–2000 mm), shared with the receiver; `save` keeps ppr, wheel, accel and
   direction in the last flash page, `defaults` restores 200 ppr / 920 mm / 0 / forward.
+- Sensor fault emulation, command `fault`: stuck channel (`fault a low|high|ok`), phase error
+  (`fault phase 0..134|ok`), glitches (`fault glitch a|b|ab <per s> [µs]`), dropped pulses
+  (`fault drop a|b|ab <1 in n>`), wheel slip/slide (`fault slip <%> <s>`), `fault clear`; shown in `status`.
+- `pulse_test.py`: every fault checked with the receiver in loopback.
 - `decel <m/s²>` (slow-down rate, used by `speed` when lowering and by `brake`), `brake` (slow to
   standstill at decel), `vmax <km/h>` speed limit for `speed`/`rpm` (default 600 km/h); `accel` and
   `decel` up to 50 m/s². Saved settings from earlier 0.4.0 builds load with decel = accel, vmax 600.

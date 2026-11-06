@@ -234,6 +234,20 @@ $$f_{J8.1} = \frac{80\,\text{MHz}}{2 \cdot ticks} \qquad f_{A/B} = \frac{80\,\te
 Example: 1922.16 Hz → J8.1 20 810 ticks = 1922.15 Hz; A/B N = 20 812, P = 1 → **1921.97 Hz** (−0.01 %).
 `freq` shows both actual values. The absolute accuracy is that of the HSI16 clock, about ±1 %.
 
+### Sensor faults (`fault`)
+
+What each fault does to the frequency a receiver measures (f = healthy frequency):
+
+$$f_{drop} = f \cdot \frac{n - 1}{n} \qquad f_{glitch} = f + r_{glitch} \qquad f_{slip} = f \cdot \left(1 + \frac{p}{100}\right)$$
+
+| Fault | Example at 1000 Hz (52.02 km/h) | Measured |
+| --- | --- | --- |
+| `fault drop a 10` (1 in 10 missing) | 1000 × 9 / 10 | A **900 Hz**, B 1000 Hz |
+| `fault glitch a 100` (100 per second) | 1000 + 100 | A **1100 Hz** |
+| `fault slip 20 3` (+20 % for 3 s) | 1000 × 1.2 | **1200 Hz = 62.43 km/h** for 3 s |
+| `fault phase 45` | A→B delay = T × 45 / 360 = 125 µs | phase **45°**, `FAULT phase` |
+| `fault a low` | A has no edges | `FAULT A missing` after 2 s |
+
 ## 4. Receiver parameters
 
 The receiver measures A on J8.2 and B on J8.3 from edge time stamps (12.5 ns resolution) and recalculates

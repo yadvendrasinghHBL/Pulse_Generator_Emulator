@@ -47,6 +47,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **done: v0.2.0 released 2026-11-05; automatic and scope tests pass on board 1** |
 | 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (68/68 with loopback); scope check 3.4 open** (decided by the user 2026-11-06: ramp to target, explicit `save`, settings shared with the receiver) |
 | 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | **FW 0.3.0: automatic tests pass on board 1 (loopback); live/fault check open** |
+| 3b | Sensor fault emulation (`fault`): stuck channel, phase error, glitches, dropped pulses, wheel slip/slide, so a receiver's fault detection can be tested | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (117/117 with loopback)**; scope check open |
 | 5 | PC display for the receiver | PC tool | not planned (Q6: console `monitor` only) |
 | 6 | Interface hardware (add-on board): isolated open-drain outputs (opto + MOSFET) and isolated, level-shifting inputs for a real 10–30 V OPG; ground from J6.2 | add-on board | open |
 
@@ -198,3 +199,14 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   limits speed and rpm; brake at decel 10 from 36 km/h: 18.0 km/h after 0.50 s, standstill within 1.5 s;
   accel 50: 0 -> 180 km/h steady within 1.4 s (3460.2 Hz); receiver at 10 kHz: 10000.0 Hz, 50.0 %, 90.0°,
   520.25 km/h, 0 lost edges; at 50 kHz: 50000.0 Hz, 50.0 %, 90.0°, 2601.24 km/h, 0 lost edges.
+- 2026-11-06: Sensor fault emulation (user chose option A, all faults): `fault.c` + fault support in `quad.c`
+  (lag compare G = N/4 + N x phase / 180, frequency change generalised to any phase; stuck channel = OCxM
+  forced, cleared by re-syncing to the ideal levels; dropped pulse = CC interrupt forces the channel low
+  for two toggles, CC3 interrupt only while dropping on B; glitch = forced opposite level timed with DWT,
+  only when the channel's next toggle is far) and wheel slip/slide in `speed.c`. First board run 113/117:
+  drop off by one (1 in n+1), glitches made but lost by our receiver because the glitch masked all
+  interrupts (now BASEPRI masks only TIM1/TIM2), and a test parse bug. Second run ALL CHECKS PASSED
+  (117/117): stuck A/B -> FAULT A/B missing, ok -> 90.0° again; phase 45 -> 45.0° FAULT phase, kept at
+  2000 Hz; phase 100 -> OK; drop a 10 -> A 900.0 Hz; drop b 4 -> B 750.0 Hz; glitch a 100 -> A 1100.0 Hz;
+  slip 20 -> receiver 119.98 km/h while the model shows 100; slide -30 -> 70.0 km/h.
+  Not verified on a scope: glitch width and shape.
