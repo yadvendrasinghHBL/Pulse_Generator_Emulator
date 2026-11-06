@@ -45,7 +45,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 |---|---|---|---|
 | 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done: v0.1.0 released 2026-11-05; automatic and scope tests pass on board 1** |
 | 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **done: v0.2.0 released 2026-11-05; automatic and scope tests pass on board 1** |
-| 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (no loopback); receiver and scope checks open** (decided by the user 2026-11-06: ramp to target, explicit `save`, settings shared with the receiver) |
+| 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (68/68 with loopback); scope check 3.4 open** (decided by the user 2026-11-06: ramp to target, explicit `save`, settings shared with the receiver) |
 | 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | **FW 0.3.0: automatic tests pass on board 1 (loopback); live/fault check open** |
 | 5 | PC display for the receiver | PC tool | not planned (Q6: console `monitor` only) |
 | 6 | Interface hardware (add-on board): isolated open-drain outputs (opto + MOSFET) and isolated, level-shifting inputs for a real 10–30 V OPG; ground from J6.2 | add-on board | open |
@@ -78,7 +78,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 |---|---|---|
 | 3.1 | `tools/build_all.sh`: debug + release, 0 warnings | PASS (2026-11-06) |
 | 3.2 | Flash, POST, `status` FW 0.4.0, banner `Settings defaults (nothing saved)` on a board with an empty settings page | PASS (2026-11-06, board 1, UART bootloader; page held one non-valid record from earlier firmware, ignored) |
-| 3.3 | `tools/pulse_test.py`: ALL CHECKS PASSED (speed, ramp, refused while moving, save/reset/reload) | PASS (2026-11-06, board 1, 54/54, without loopback wires); receiver-vs-speed-model checks open (need loopback) |
+| 3.3 | `tools/pulse_test.py`: ALL CHECKS PASSED (speed, ramp, refused while moving, save/reset/reload) | PASS (2026-11-06, board 1: 54/54 without loopback, then 68/68 with loopback J8.6→J8.2, J8.7→J8.3) |
 | 3.4 | Scope during a ramp (`accel 1`, `speed 100`, `speed 0`): frequency rises and falls smoothly, no short pulse, 90° kept, outputs hold at standstill | open |
 
 ### Stage 4 checks (bench)
@@ -186,3 +186,8 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   691.994 Hz after 2.6 s, braked to standstill with levels held, save -> reset -> 123 ppr / 850 mm / 1.250 /
   rev loaded, original settings saved back. Receiver checks skipped (loopback wires not fitted).
   Not verified: receiver against the speed model, ramp on the scope (check 3.4).
+- 2026-11-06: Board 1, FW 0.4.0, loopback wires J8.6→J8.2 and J8.7→J8.3 fitted: `pulse_test.py` ALL CHECKS
+  PASSED (68/68). Receiver vs speed model: 36.0 km/h at `speed 36`, 500.0 rpm at `rpm 500`. Receiver: A/B
+  1000.0 Hz, duty 50.0 %, phase 90.0° forward / 270.0° reverse, 52.02 km/h, distance +1730 pulses in 2 s,
+  683 -> -317 in reverse, 1.0 Hz at `start 1`, standstill 2 s after stop, `monitor` with the rpm column
+  (300.00 rpm at 1000 Hz). Still open: T13 (live fault by pulling a wire) and scope check 3.4.
