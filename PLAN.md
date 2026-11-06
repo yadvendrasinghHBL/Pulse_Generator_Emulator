@@ -45,7 +45,7 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 |---|---|---|---|
 | 1 | Single 50 % pulse output, `freq` / `start` / `stop` / `status`, project + tools + CI | J8.1 (PA5, TIM2) | **done: v0.1.0 released 2026-11-05; automatic and scope tests pass on board 1** |
 | 2 | Two-channel sensor output: A and B 50 %, B 90° behind A (forward) or ahead (reverse), `dir fwd/rev`, same `freq` / `start` / `stop` rules as stage 1 (no short pulse, off at boot) | J8.6, J8.7 (PB0, PB1, TIM1) | **done: v0.2.0 released 2026-11-05; automatic and scope tests pass on board 1** |
-| 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | open |
+| 3 | Speed model on the outputs: `speed <km/h>`, `wheel <mm>`, `ppr <n>`, `accel <m/s²>` ramps, distance from pulse count, settings in flash (last page 0x0803F800) | J8.6, J8.7 | **FW 0.4.0: automatic tests pass on board 1 (no loopback); receiver and scope checks open** (decided by the user 2026-11-06: ramp to target, explicit `save`, settings shared with the receiver) |
 | 4 | Receiver: two inputs, edge time capture → frequency A/B, duty, phase A–B, direction, speed, distance, acceleration, standstill timeout, faults; `monitor` command prints them continuously. Self-test with loopback wires | J8.2, J8.3 (PA6, PA7, TIM3) | **FW 0.3.0: automatic tests pass on board 1 (loopback); live/fault check open** |
 | 5 | PC display for the receiver | PC tool | not planned (Q6: console `monitor` only) |
 | 6 | Interface hardware (add-on board): isolated open-drain outputs (opto + MOSFET) and isolated, level-shifting inputs for a real 10–30 V OPG; ground from J6.2 | add-on board | open |
@@ -71,6 +71,15 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
 | 2.3 | `tools/pulse_test.py`: ALL CHECKS PASSED (A/B rate, `dir`, A/B order both directions) | PASS (2026-11-05, board 1, 26/26) |
 | 2.4 | Scope CH1 J8.6, CH2 J8.7: both 50 %, B 90° behind A (forward), ahead (reverse) | PASS (2026-11-05, board 1, DS1054, T11 reported completed by the user; phase readings not reported) |
 | 2.5 | Scope: frequency change while running keeps 90°, no short pulse on A or B | PASS (2026-11-05, board 1, DS1054, T12: width trigger < 150 µs did not fire on A or B at 1000 → 2500 Hz, control fired, phase kept, 0.05 Hz → 1 kHz at once) |
+
+### Stage 3 checks (bench)
+
+| # | Check | Result |
+|---|---|---|
+| 3.1 | `tools/build_all.sh`: debug + release, 0 warnings | PASS (2026-11-06) |
+| 3.2 | Flash, POST, `status` FW 0.4.0, banner `Settings defaults (nothing saved)` on a board with an empty settings page | PASS (2026-11-06, board 1, UART bootloader; page held one non-valid record from earlier firmware, ignored) |
+| 3.3 | `tools/pulse_test.py`: ALL CHECKS PASSED (speed, ramp, refused while moving, save/reset/reload) | PASS (2026-11-06, board 1, 54/54, without loopback wires); receiver-vs-speed-model checks open (need loopback) |
+| 3.4 | Scope during a ramp (`accel 1`, `speed 100`, `speed 0`): frequency rises and falls smoothly, no short pulse, 90° kept, outputs hold at standstill | open |
 
 ### Stage 4 checks (bench)
 
@@ -158,3 +167,22 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   A/B 1000.0 Hz, duty 50.0 %, phase 90.0° forward / 270.0° reverse, 52.02 km/h, distance +1926 pulses in
   2 s forward and falling in reverse, 1 Hz read as 1.0 Hz, standstill after stop, `monitor` OK.
   The fault detection reported both wire faults correctly.
+- 2026-11-06: Stage 3 decisions (user): `speed` ramps to the target at `accel` (0 = at once), settings
+  persist only with an explicit `save`, the receiver shares `ppr`/`wheel` with the outputs.
+- 2026-11-06: Stage 3 firmware 0.4.0: `speed.c` (speed -> frequency, ramp stepped every 20 ms in the main
+  loop, starts from standstill at the first step, stops with levels held at 0; `freq`/`start`/`stop` now go
+  through it and cancel a ramp) and `settings.c` (32-byte CRC records appended in the page at 0x0803F800,
+  erase after 64 saves). Commands `speed`, `rpm` (wheel turns per minute, added on request), `ppr`, `wheel`, `accel`, `save`, `defaults`; `ppr`/`wheel`/
+  `save`/`defaults` refused while moving. `pulse_test.py` stage 3 checks. Build-tested only (0 warnings);
+  not yet flashed. Note: 0.3.0 was never tagged; its tag would go on commit 0270392.
+- 2026-11-06: Board 1 was found running Handoff bring-up FW 0.5.0 (attenuators 2.5 dB per stage, up 65 min);
+  the user confirmed reflashing. Flashed 0.4.0 (`artifacts/v0.4.0-0270392-dirty`) over the UART bootloader
+  with `tools/build_and_flash.sh`; POST passed, settings `defaults, nothing saved`. The settings page held one
+  non-valid record (probably from earlier firmware): ignored by the CRC check, so the first `save` went to
+  record 2. `pulse_test.py` first run 53/54: `speed 100` gave A/B 1921.968 Hz, outside the test's fixed
+  +/-0.1 Hz; this is the A/B timer rounding (half period a multiple of 4 counts, -0.01 %), so the test now
+  allows 0.02 %. Second run ALL CHECKS PASSED (54/54): speed 100 -> 1921.968 Hz, 100 at 100 ppr ->
+  961.076 Hz, rpm 500 -> 1666.667 Hz / 86.71 km/h, 5 m/s2 ramp 17.71 km/h after 1.00 s, steady 36 km/h at
+  691.994 Hz after 2.6 s, braked to standstill with levels held, save -> reset -> 123 ppr / 850 mm / 1.250 /
+  rev loaded, original settings saved back. Receiver checks skipped (loopback wires not fitted).
+  Not verified: receiver against the speed model, ramp on the scope (check 3.4).

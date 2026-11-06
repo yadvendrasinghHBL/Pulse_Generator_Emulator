@@ -14,6 +14,8 @@
 #include "pulse.h"
 #include "quad.h"
 #include "rx.h"
+#include "settings.h"
+#include "speed.h"
 #include "version.h"
 
 #include <stdlib.h>
@@ -29,40 +31,52 @@ typedef struct {
 } cli_cmd_t;
 
 static void cmd_help(int argc, char **argv);
+static void print_fixed(double v, unsigned dec);
+static void print_speed_line(void);
+static void print_settings_line(void);
 
 /*
- * Parse a frequency in Hz with up to 3 decimals ("100", "0.5", "1234.567")
- * into mHz. Digits only: no sign, no exponent, no unit. 0 = OK.
+ * Parse a decimal number with up to `dec` decimals ("100", "0.5", "1234.567")
+ * into an integer in units of 10^-dec. Digits only: no sign, no exponent, no
+ * unit. 0 = OK, -1 = bad syntax or more than `max`.
  */
-static int parse_mhz(const char *s, uint32_t *mhz)
+static int parse_fixed(const char *s, unsigned dec, uint32_t max, uint32_t *out)
 {
-  uint64_t whole = 0;
-  uint32_t frac = 0;
-  int int_digits = 0;
-  int frac_digits = 0;
+  uint64_t v = 0;
+  unsigned frac_digits = 0;
+  int digits = 0;
 
-  for (; *s >= '0' && *s <= '9'; s++, int_digits++) {
-    whole = whole * 10U + (uint64_t)(*s - '0');
-    if (whole > PULSE_MAX_MHZ / 1000U) {
-      return -1;
+  for (; *s >= '0' && *s <= '9'; s++, digits++) {
+    v = v * 10U + (uint64_t)(*s - '0');
+    if (v > max) {
+      return -1;                  /* the scaled value can only be larger */
     }
   }
   if (*s == '.') {
-    for (s++; *s >= '0' && *s <= '9'; s++, frac_digits++) {
-      if (frac_digits == 3) {
+    for (s++; *s >= '0' && *s <= '9'; s++, digits++, frac_digits++) {
+      if (frac_digits == dec) {
         return -1;
       }
-      frac = frac * 10U + (uint32_t)(*s - '0');
-    }
-    for (int i = frac_digits; i < 3; i++) {
-      frac *= 10U;
+      v = v * 10U + (uint64_t)(*s - '0');
     }
   }
-  if (*s != '\0' || int_digits + frac_digits == 0) {
+  if (*s != '\0' || digits == 0) {
     return -1;
   }
-  *mhz = (uint32_t)(whole * 1000U + frac);
+  for (; frac_digits < dec; frac_digits++) {
+    v *= 10U;
+  }
+  if (v > max) {
+    return -1;
+  }
+  *out = (uint32_t)v;
   return 0;
+}
+
+/* Frequency in Hz with up to 3 decimals -> mHz */
+static int parse_mhz(const char *s, uint32_t *mhz)
+{
+  return parse_fixed(s, 3, PULSE_MAX_MHZ, mhz);
 }
 
 static void print_hz(uint32_t mhz)
@@ -85,15 +99,6 @@ static void print_freq_line(void)
   con_puts("A/B actual ");
   print_hz(quad_actual_mhz());
   con_printf(" (half period %lu x %lu ticks at 80 MHz)\n", quad_counter_period(), quad_prescaler());
-}
-
-/* Apply a frequency to all outputs; both modules accept the same range */
-static int set_all_mhz(uint32_t mhz)
-{
-  if (pulse_set_mhz(mhz)) {
-    return -1;
-  }
-  return quad_set_mhz(mhz);
 }
 
 static const char *state_name(pulse_state_t s)
@@ -159,6 +164,8 @@ static void cmd_status(int argc, char **argv)
   print_freq_line();
   print_count("", pulse_count());
   print_count("A/B ", quad_count());
+  print_speed_line();
+  print_settings_line();
   if (diag_measure(&vdda, &temp) == 0) {
     con_printf("VDDA %lu mV, temperature %ld C\n", vdda, temp);
   } else {
@@ -178,7 +185,7 @@ static void cmd_freq(int argc, char **argv)
     con_puts("ERR usage: freq | freq <Hz 0.01..50000>\n");
     return;
   }
-  if (parse_mhz(argv[1], &mhz) || set_all_mhz(mhz)) {
+  if (parse_mhz(argv[1], &mhz) || speed_set_mhz(mhz)) {
     freq_range_error();
     return;
   }
@@ -194,13 +201,11 @@ static void cmd_start(int argc, char **argv)
     con_puts("ERR usage: start | start <Hz 0.01..50000>\n");
     return;
   }
-  if (argc == 2 && (parse_mhz(argv[1], &mhz) || set_all_mhz(mhz))) {
+  if (argc == 2 && (parse_mhz(argv[1], &mhz) || speed_set_mhz(mhz))) {
     freq_range_error();
     return;
   }
-  /* back to back, so J8.1 and A start within a few microseconds (not phase locked) */
-  pulse_start();
-  quad_start();
+  speed_start();
   con_puts("OK ");
   print_output_line();
   print_freq_line();
@@ -214,8 +219,7 @@ static void cmd_stop(int argc, char **argv)
     con_puts("ERR usage: stop | stop low\n");
     return;
   }
-  pulse_stop(force_low);
-  quad_stop(force_low);
+  speed_stop(force_low);
   con_puts("OK ");
   print_output_line();
 }
@@ -239,6 +243,195 @@ static void cmd_dir(int argc, char **argv)
   }
   con_puts("OK ");
   print_output_line();
+}
+
+/* m/s2 as stored (mm/s2) */
+static void print_accel(void)
+{
+  uint32_t a = settings_accel_mm_s2();
+
+  con_printf("accel %lu.%03lu m/s2", a / 1000U, a % 1000U);
+}
+
+static void print_speed_line(void)
+{
+  con_puts("speed ");
+  print_fixed(speed_kmh(), 2);
+  con_puts(" km/h, target ");
+  print_fixed(speed_target_kmh(), 2);
+  con_puts(" km/h, ");
+  print_accel();
+  con_printf(": %s, distance ", speed_ramping() ? "ramping"
+             : (quad_state() == PULSE_RUNNING ? "steady" : "standstill"));
+  print_fixed(speed_distance_m(), 3);
+  con_puts(" m since start\nwheel ");
+  print_fixed(speed_rpm(), 2);
+  con_puts(" rpm, target ");
+  print_fixed(speed_target_rpm(), 2);
+  con_puts(" rpm\n");
+}
+
+static void print_settings_line(void)
+{
+  uint32_t max = speed_max_ckmh();
+
+  con_printf("settings: %lu ppr, wheel %lu mm (", settings_ppr(), settings_wheel_mm());
+  print_fixed(settings_m_per_pulse() * 1000.0, 3);
+  con_printf(" mm per pulse, max %lu.%02lu km/h), ", max / 100U, max % 100U);
+  print_accel();
+  con_printf(", dir %s: %s\n", quad_dir() == QUAD_FWD ? "fwd" : "rev",
+             settings_dirty() ? "not saved (type save)"
+             : (settings_from_flash() ? "saved" : "defaults, nothing saved"));
+}
+
+static void stop_first(const char *what)
+{
+  con_printf("ERR stop first: %s only at standstill\n", what);
+}
+
+static void cmd_speed(int argc, char **argv)
+{
+  uint32_t ckmh;
+
+  if (argc == 1) {
+    print_speed_line();
+    print_freq_line();
+    return;
+  }
+  if (argc != 2 || parse_fixed(argv[1], 2, 99999999U, &ckmh)) {
+    con_puts("ERR usage: speed | speed <km/h, up to 2 decimals>\n");
+    return;
+  }
+  if (speed_set_target_ckmh(ckmh)) {
+    uint32_t max = speed_max_ckmh();
+
+    con_printf("ERR speed must be 0 or give 0.01..50000 Hz: max %lu.%02lu km/h at %lu ppr, wheel %lu mm\n",
+               max / 100U, max % 100U, settings_ppr(), settings_wheel_mm());
+    return;
+  }
+  con_puts("OK ");
+  print_speed_line();
+  print_freq_line();
+}
+
+/* Same as `speed`, in wheel turns per minute (rpm = f x 60 / ppr) */
+static void cmd_rpm(int argc, char **argv)
+{
+  uint32_t crpm;
+
+  if (argc == 1) {
+    print_speed_line();
+    print_freq_line();
+    return;
+  }
+  if (argc != 2 || parse_fixed(argv[1], 2, 99999999U, &crpm)) {
+    con_puts("ERR usage: rpm | rpm <wheel rpm, up to 2 decimals>\n");
+    return;
+  }
+  if (speed_set_target_crpm(crpm)) {
+    uint32_t max = speed_max_crpm();
+
+    con_printf("ERR rpm must be 0 or give 0.01..50000 Hz: max %lu.%02lu rpm at %lu ppr\n",
+               max / 100U, max % 100U, settings_ppr());
+    return;
+  }
+  con_puts("OK ");
+  print_speed_line();
+  print_freq_line();
+}
+
+static void cmd_ppr(int argc, char **argv)
+{
+  uint32_t n;
+
+  if (argc == 1) {
+    print_settings_line();
+    return;
+  }
+  if (argc != 2 || parse_fixed(argv[1], 0, SETTINGS_PPR_MAX, &n) || n < SETTINGS_PPR_MIN) {
+    con_printf("ERR usage: ppr | ppr <%u..%u>\n", SETTINGS_PPR_MIN, SETTINGS_PPR_MAX);
+    return;
+  }
+  if (speed_moving()) {
+    stop_first("pulses per turn change");
+    return;
+  }
+  settings_set_ppr(n);
+  con_puts("OK ");
+  print_settings_line();
+}
+
+static void cmd_wheel(int argc, char **argv)
+{
+  uint32_t mm;
+
+  if (argc == 1) {
+    print_settings_line();
+    return;
+  }
+  if (argc != 2 || parse_fixed(argv[1], 0, SETTINGS_WHEEL_MAX_MM, &mm) ||
+      mm < SETTINGS_WHEEL_MIN_MM) {
+    con_printf("ERR usage: wheel | wheel <mm %u..%u>\n", SETTINGS_WHEEL_MIN_MM, SETTINGS_WHEEL_MAX_MM);
+    return;
+  }
+  if (speed_moving()) {
+    stop_first("the wheel diameter changes");
+    return;
+  }
+  settings_set_wheel_mm(mm);
+  con_puts("OK ");
+  print_settings_line();
+}
+
+static void cmd_accel(int argc, char **argv)
+{
+  uint32_t a;
+
+  if (argc == 1) {
+    print_settings_line();
+    return;
+  }
+  if (argc != 2 || parse_fixed(argv[1], 3, SETTINGS_ACCEL_MAX_MM_S2, &a)) {
+    con_puts("ERR usage: accel | accel <m/s2 0..10, up to 3 decimals; 0 = no ramp>\n");
+    return;
+  }
+  settings_set_accel_mm_s2(a);
+  con_puts("OK ");
+  print_settings_line();
+}
+
+static void cmd_save(int argc, char **argv)
+{
+  if (argc != 1) {
+    con_puts("ERR usage: save\n");
+    return;
+  }
+  if (speed_moving()) {
+    stop_first("settings are saved");   /* a page erase stalls the CPU for about 22 ms */
+    return;
+  }
+  if (settings_save()) {
+    con_puts("ERR flash write failed: settings not saved\n");
+    return;
+  }
+  con_printf("OK saved (record %lu of %u in the page)\n", settings_slots_used(),
+             (unsigned)(SETTINGS_PAGE_BYTES / 32U));
+  print_settings_line();
+}
+
+static void cmd_defaults(int argc, char **argv)
+{
+  if (argc != 1) {
+    con_puts("ERR usage: defaults\n");
+    return;
+  }
+  if (speed_moving()) {
+    stop_first("defaults are loaded");
+    return;
+  }
+  settings_defaults();
+  con_puts("OK defaults loaded (type save to keep them)\n");
+  print_settings_line();
 }
 
 /* Print v with `dec` decimals (newlib-nano printf has no float) */
@@ -281,6 +474,12 @@ static void print_phase(const rx_values_t *v)
   }
 }
 
+/* Wheel rpm from a speed, with the shared wheel diameter */
+static double kmh_to_rpm(double kmh)
+{
+  return kmh / 3.6 / (settings_m_per_pulse() * (double)settings_ppr()) * 60.0;
+}
+
 static void cmd_rx(int argc, char **argv)
 {
   rx_values_t v;
@@ -295,7 +494,7 @@ static void cmd_rx(int argc, char **argv)
     return;
   }
   rx_get(&v);
-  con_printf("receiver %s, %u ppr, wheel %u mm: %s\n", RX_NAME, RX_PPR, RX_WHEEL_MM,
+  con_printf("receiver %s, %lu ppr, wheel %lu mm: %s\n", RX_NAME, settings_ppr(), settings_wheel_mm(),
              rx_status_name(v.status));
   for (int n = 0; n < 2; n++) {
     con_printf("%c ", n ? 'B' : 'A');
@@ -307,7 +506,9 @@ static void cmd_rx(int argc, char **argv)
   print_phase(&v);
   con_puts("\nspeed ");
   print_fixed(v.speed_kmh, 2);
-  con_puts(" km/h, accel ");
+  con_puts(" km/h (");
+  print_fixed(kmh_to_rpm(v.speed_kmh), 2);
+  con_puts(" rpm), accel ");
   print_fixed(v.accel_ms2, 2);
   con_puts(" m/s2\ndistance ");
   print_fixed(v.distance_m, 3);
@@ -326,13 +527,14 @@ static void cmd_monitor(int argc, char **argv)
     con_puts("ERR usage: monitor (press Enter to stop)\n");
     return;
   }
-  con_printf("monitor: %s, %u ppr, wheel %u mm, every %u ms. Press Enter to stop.\n",
-             RX_NAME, RX_PPR, RX_WHEEL_MM, RX_UPDATE_MS);
-  con_puts("    km/h  m/s2      A Hz   A %      B Hz   B %  phase deg       dist m  status\n");
+  con_printf("monitor: %s, %lu ppr, wheel %lu mm, every %u ms. Press Enter to stop.\n",
+             RX_NAME, settings_ppr(), settings_wheel_mm(), RX_UPDATE_MS);
+  con_puts("    km/h     rpm  m/s2      A Hz   A %      B Hz   B %  phase deg       dist m  status\n");
   rx_updated();
   uint32_t beat = HAL_GetTick();
   while (!con_line_pending()) {
     rx_poll();
+    speed_poll();
     if (HAL_GetTick() - beat >= 500U) {
       beat += 500U;
       HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);
@@ -343,6 +545,8 @@ static void cmd_monitor(int argc, char **argv)
     rx_get(&v);
     con_puts(" ");
     print_fixed(v.speed_kmh, 2);
+    con_puts("  ");
+    print_fixed(kmh_to_rpm(v.speed_kmh), 2);
     con_puts("  ");
     print_fixed(v.accel_ms2, 2);
     for (int n = 0; n < 2; n++) {
@@ -463,6 +667,13 @@ static const cli_cmd_t commands[] = {
   { "start",      "start | start <Hz>: J8.1 and A/B (J8.6, J8.7)",       cmd_start,      0 },
   { "stop",       "stop | stop low: stop, hold the levels or force low", cmd_stop,       0 },
   { "dir",        "dir | dir fwd | dir rev: which channel leads (stopped)", cmd_dir,     0 },
+  { "speed",      "speed | speed <km/h>: drive at a speed, ramps at accel", cmd_speed,   0 },
+  { "rpm",        "rpm | rpm <n>: drive at a wheel rpm, ramps at accel", cmd_rpm,        0 },
+  { "ppr",        "ppr | ppr <n>: pulses per turn, 1..1000 (stopped)",   cmd_ppr,        0 },
+  { "wheel",      "wheel | wheel <mm>: wheel diameter, 100..2000 (stopped)", cmd_wheel,  0 },
+  { "accel",      "accel | accel <m/s2>: ramp rate, 0..10, 0 = no ramp", cmd_accel,      0 },
+  { "save",       "save ppr, wheel, accel, dir in flash (stopped)",      cmd_save,       0 },
+  { "defaults",   "200 ppr, 920 mm, accel 0, fwd (stopped; then save)",  cmd_defaults,   0 },
   { "rx",         "rx | rx reset: receiver values (J8.2, J8.3) / zero distance", cmd_rx, 0 },
   { "monitor",    "receiver values every 0.5 s until Enter",             cmd_monitor,    0 },
   { "reset",      "software reset (output off until the next start)",    cmd_reset,      0 },

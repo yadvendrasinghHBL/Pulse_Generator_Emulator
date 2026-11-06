@@ -102,16 +102,151 @@ def parse_rx(r):
     try:
         f = re.findall(r"^([AB]) ([\d.]+) Hz, duty ([\d.]+) %", r, re.M)
         ph = re.search(r"^phase (?:([\d.]+) deg (forward|reverse)|-)", r, re.M)
-        sp = re.search(r"^speed ([\d.]+) km/h", r, re.M)
+        sp = re.search(r"^speed ([\d.]+) km/h \(([\d.]+) rpm\)", r, re.M)
         pu = re.search(r"pulses (-?\d+)", r)
         st = re.search(r"^receiver .*: (.+)$", r, re.M)
         return {
             "fa": float(f[0][1]), "da": float(f[0][2]), "fb": float(f[1][1]), "db": float(f[1][2]),
             "phase": float(ph.group(1)) if ph.group(1) else None, "dir": ph.group(2),
-            "speed": float(sp.group(1)), "pulses": int(pu.group(1)), "status": st.group(1).strip(),
+            "speed": float(sp.group(1)), "rpm": float(sp.group(2)), "pulses": int(pu.group(1)), "status": st.group(1).strip(),
         }
     except (AttributeError, IndexError, ValueError):
         return None
+
+
+def parse_settings(r):
+    """ppr, wheel, accel, dir and save state from the `settings:` line, or None."""
+    m = re.search(r"settings: (\d+) ppr, wheel (\d+) mm .*, accel ([\d.]+) m/s2, dir (fwd|rev): (.+)$", r, re.M)
+    if not m:
+        return None
+    return {"ppr": int(m.group(1)), "wheel": int(m.group(2)), "accel": m.group(3), "dir": m.group(4),
+            "state": m.group(5).strip()}
+
+
+def parse_speed(r):
+    m = re.search(r"^(?:OK )?speed ([\d.]+) km/h, target ([\d.]+) km/h, accel [\d.]+ m/s2: (\w+), "
+                  r"distance (-?[\d.]+) m", r, re.M)
+    if not m:
+        return None
+    return {"now": float(m.group(1)), "target": float(m.group(2)), "state": m.group(3),
+            "dist": float(m.group(4))}
+
+
+def ab_hz(r):
+    m = re.search(r"^A/B actual ([\d.]+) Hz", r, re.M)
+    return float(m.group(1)) if m else -1.0
+
+
+def hz_for(kmh, ppr=200, wheel_mm=920):
+    return kmh / 3.6 / (3.141592653589793 * wheel_mm / 1000 / ppr)
+
+
+def near(hz, want):
+    """A/B actual frequency vs the exact one: the 16-bit timer's half period is N x P counts with N a
+    multiple of 4, so the produced frequency is off by up to 0.01 % (1922.16 Hz -> 1921.97 Hz)."""
+    return abs(hz - want) <= want * 0.0002
+
+
+def sleep_until(t):
+    time.sleep(max(0.0, t - time.monotonic()))
+
+
+def speed_checks(b):
+    """Stage 3: speed model, ramps, settings in flash. Leaves the saved settings as it found them."""
+    b.cmd("stop low")
+    orig = parse_settings(b.cmd("ppr"))
+    check(orig is not None, "settings line parses", str(orig))
+    if orig is None:
+        return
+    for c in ("ppr 200", "wheel 920", "accel 0", "dir fwd"):
+        b.cmd(c)
+    for bad in ("ppr 0", "ppr 1001", "ppr 2.5", "wheel 99", "wheel 2001", "accel 10.001", "accel -1",
+                "speed abc", "speed 1.234", "speed 2602"):
+        check(b.cmd(bad).startswith("ERR"), f"{bad} rejected")
+
+    r = b.cmd("speed 100")
+    s = parse_speed(r)
+    check(r.startswith("OK speed") and s is not None and s["state"] == "steady" and near(ab_hz(r), hz_for(100)),
+          "speed 100 (accel 0) -> 1922.16 Hz at once, outputs running", r.split("\n")[0] + f", A/B {ab_hz(r)} Hz")
+    check(b.cmd("ppr 100").startswith("ERR stop first"), "ppr change rejected while moving")
+    check(b.cmd("save").startswith("ERR stop first"), "save rejected while moving")
+    s = parse_speed(b.cmd("speed 0"))
+    check(s is not None and s["state"] == "standstill" and "stopped" in b.cmd("status"),
+          "speed 0 (accel 0) stops at once, levels held", str(s))
+
+    b.cmd("ppr 100")
+    r = b.cmd("speed 100")
+    check(near(ab_hz(r), hz_for(100, 100)), "speed 100 at 100 ppr -> 961.1 Hz", f"A/B {ab_hz(r)} Hz")
+    b.cmd("speed 0")
+    b.cmd("ppr 200")
+
+    # wheel rpm: f = rpm x ppr / 60, so 500 rpm at 200 ppr = 1666.667 Hz = 86.71 km/h
+    for bad in ("rpm 1.234", "rpm 15001", "rpm x"):
+        check(b.cmd(bad).startswith("ERR"), f"{bad} rejected")
+    r = b.cmd("rpm 500")
+    s = parse_speed(r)
+    m = re.search(r"^wheel ([\d.]+) rpm, target ([\d.]+) rpm", r, re.M)
+    check(r.startswith("OK speed") and near(ab_hz(r), 500 * 200 / 60) and s is not None
+          and abs(s["now"] - 86.71) < 0.01 and m is not None and float(m.group(1)) == 500.0,
+          "rpm 500 at 200 ppr -> 1666.7 Hz, 86.71 km/h", f"A/B {ab_hz(r)} Hz, {s and s['now']} km/h, "
+          f"{m and m.group(1)} rpm")
+    time.sleep(1.2)
+    v = parse_rx(b.cmd("rx"))
+    if v is not None and v["fa"] > 0:
+        check(abs(v["rpm"] - 500) < 1, "receiver shows the wheel rpm (loopback)", f"{v['rpm']} rpm")
+    b.cmd("speed 0")
+
+    # ramp: 5 m/s2 = 18 km/h per second, 0 -> 36 km/h in 2 s
+    b.cmd("accel 5")
+    r = b.cmd("speed 36")
+    t0 = b.sent_at
+    s = parse_speed(r)
+    check(s is not None and s["state"] == "ramping" and s["target"] == 36.0, "speed 36 with accel 5 ramps", str(s))
+    sleep_until(t0 + 1.0)
+    s = parse_speed(b.cmd("speed"))
+    el = b.sent_at - t0
+    check(s is not None and s["state"] == "ramping" and abs(s["now"] - 18 * el) < 3,
+          "ramp after about 1 s", f"{s and s['now']} km/h after {el:.2f} s (expect {18 * el:.1f} +/- 3)")
+    sleep_until(t0 + 2.6)
+    r = b.cmd("speed")
+    s = parse_speed(r)
+    check(s is not None and s["state"] == "steady" and s["now"] == 36.0 and near(ab_hz(r), hz_for(36)),
+          "ramp ends steady at 36 km/h, 692.0 Hz", f"{s}, A/B {ab_hz(r)} Hz")
+    time.sleep(1.2)                                  # two receiver windows at the steady speed
+    v = parse_rx(b.cmd("rx"))
+    if v is not None and v["fa"] > 0:
+        check(abs(v["speed"] - 36) < 0.2, "receiver speed matches the speed model (loopback)", f"{v['speed']} km/h")
+    r = b.cmd("speed 0")
+    t0 = b.sent_at
+    sleep_until(t0 + 2.6)
+    s = parse_speed(b.cmd("speed"))
+    check(s is not None and s["state"] == "standstill" and s["now"] == 0 and s["dist"] > 15
+          and "stopped" in b.cmd("status"),
+          "speed 0 brakes to standstill in 2 s, outputs stopped, distance kept", str(s))
+
+    # settings survive a reset
+    for c in ("ppr 123", "wheel 850", "accel 1.25", "dir rev"):
+        b.cmd(c)
+    r = b.cmd("save")
+    check(r.startswith("OK saved"), "save", r.split("\n")[0])
+    b.cmd("defaults")
+    s = parse_settings(b.cmd("ppr"))
+    check(s is not None and (s["ppr"], s["wheel"], s["accel"], s["dir"]) == (200, 920, "0.000", "fwd")
+          and s["state"].startswith("not saved"), "defaults: 200 ppr, 920 mm, accel 0, fwd, not saved", str(s))
+    b.cmd("reset")
+    if not wait_for_prompt(b.port):
+        check(False, "board answers after reset")
+        return
+    s = parse_settings(b.cmd("ppr"))
+    check(s is not None and (s["ppr"], s["wheel"], s["accel"], s["dir"], s["state"]) == (123, 850, "1.250", "rev", "saved"),
+          "settings loaded from flash after reset", str(s))
+
+    for c in (f"ppr {orig['ppr']}", f"wheel {orig['wheel']}", f"accel {orig['accel']}", f"dir {orig['dir']}"):
+        b.cmd(c)
+    r = b.cmd("save")
+    s = parse_settings(r)
+    check(r.startswith("OK saved") and s is not None and (s["ppr"], s["wheel"], s["accel"], s["dir"])
+          == (orig["ppr"], orig["wheel"], orig["accel"], orig["dir"]), "original settings saved back", str(s))
 
 
 def receiver_checks(b):
@@ -128,7 +263,8 @@ def receiver_checks(b):
         print("[SKIP] receiver checks: no signal on J8.2/J8.3 (loopback wires J8.6->J8.2, J8.7->J8.3 not fitted)")
         b.cmd("stop low")
         return
-    kmh = 1000 * 3.141592653589793 * 0.92 / 200 * 3.6           # 52.02 km/h at 1000 Hz
+    st = parse_settings(b.cmd("ppr")) or {"ppr": 200, "wheel": 920}
+    kmh = 1000 / hz_for(1, st["ppr"], st["wheel"])                # 52.02 km/h at 1000 Hz, 200 ppr, 920 mm
     check(abs(v["fa"] - 1000) < 0.5 and abs(v["fb"] - 1000) < 0.5, "rx frequency A/B at 1000 Hz",
           f"A {v['fa']} Hz, B {v['fb']} Hz (same clock as the outputs: expect 1000 +/- 0.5)")
     check(49.5 <= v["da"] <= 50.5 and 49.5 <= v["db"] <= 50.5, "rx duty A/B 50 %",
@@ -248,6 +384,7 @@ def main():
         r = b.cmd("stop low")
         check("level low" in r and "levels A low, B low" in r, "stop low forces all outputs low", r)
 
+        speed_checks(b)
         receiver_checks(b)
 
     failed = results.count(False)

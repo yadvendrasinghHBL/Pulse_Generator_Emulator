@@ -7,7 +7,8 @@
  * (TIM3 input capture) measures A/B signals and shows the speed parameters.
  *
  * Boot sequence: attenuator LE low -> clocks -> LEDs -> console -> POST ->
- * pulse timer (output stays off until `start`) -> command shell.
+ * pulse timers -> saved settings -> command shell (outputs stay off until
+ * `start` or `speed`).
  * Green LED = heartbeat (firmware alive), orange LED = POST failure / fault.
  */
 #include "board.h"
@@ -17,6 +18,8 @@
 #include "pulse.h"
 #include "quad.h"
 #include "rx.h"
+#include "settings.h"
+#include "speed.h"
 #include "version.h"
 
 /* Pause before the banner so the boot output can be watched on a terminal */
@@ -111,6 +114,7 @@ int main(void)
   diag_init();
   pulse_init();
   quad_init();
+  settings_init();               /* after quad_init: applies the saved direction */
   rx_init();
 
   HAL_Delay(BANNER_DELAY_MS);
@@ -118,6 +122,10 @@ int main(void)
   diag_print_info();
   int fails = diag_post();
   board_led(LED_ORANGE_PORT, LED_ORANGE_PIN, fails != 0);
+  con_printf("Settings %s: %lu ppr, wheel %lu mm, accel %lu.%03lu m/s2, dir %s\n",
+             settings_from_flash() ? "from flash" : "defaults (nothing saved)",
+             settings_ppr(), settings_wheel_mm(), settings_accel_mm_s2() / 1000U,
+             settings_accel_mm_s2() % 1000U, quad_dir() == QUAD_FWD ? "fwd" : "rev");
   con_printf("Outputs %s and %s: off. Type 'start' to begin, 'help' for commands.\n",
              PULSE1_NAME, QUAD_NAME);
   cli_prompt();
@@ -132,6 +140,7 @@ int main(void)
       cli_prompt();
     }
     rx_poll();
+    speed_poll();
     if (HAL_GetTick() - last_beat >= 500U) {
       last_beat += 500U;
       HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);

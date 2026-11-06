@@ -12,6 +12,18 @@ A GitHub release is created from the section of the tagged version.
   acceleration, standstill after 2 s, faults (input missing, phase outside 90° ± 20°).
 - Commands `rx`, `rx reset`, `monitor`; engineering command `inputs` (raw pin levels, edge counts, TIM3).
 - `pulse_test.py`: receiver checks with loopback wires J8.6 → J8.2, J8.7 → J8.3 (skipped without them).
+- Stage 3 (FW 0.4.0): speed model. `speed <km/h>` drives all outputs at a train speed, ramping at
+  `accel <m/s²>` (0 = at once); `speed 0` brakes to standstill and holds the levels. Settings `ppr`
+  (1–1000) and `wheel` (100–2000 mm), shared with the receiver; `save` keeps ppr, wheel, accel and
+  direction in the last flash page, `defaults` restores 200 ppr / 920 mm / 0 / forward.
+- `rpm <n>`: drive at a wheel speed in turns per minute (same ramp as `speed`); wheel rpm shown by
+  `speed`, `status`, `rx` and `monitor`.
+- `status` shows the speed, the distance since start and the settings; the banner shows where the
+  settings came from.
+- `pulse_test.py`: stage 3 checks (speed, ramp, settings refused while moving, save and reload after reset).
+
+### Changed
+- The receiver uses the `ppr` / `wheel` settings instead of fixed 200 ppr / 920 mm.
 
 ## [0.2.0] - 2026-11-05
 

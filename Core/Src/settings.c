@@ -1,0 +1,226 @@
+/*
+ * Settings in the last flash page (0x0803F800).
+ *
+ * Why a record log instead of one fixed record: a page erase stalls the CPU
+ * for about 22 ms and the flash is rated for 10 000 erase cycles. Each save
+ * appends one 32-byte record (4 double words, the L4 programming unit) to the
+ * next free slot; only when all 64 slots are used is the page erased and the
+ * record written to slot 0. At boot the last slot with a valid record wins.
+ * A record is valid when its magic, layout version, CRC-32 and value ranges
+ * are all right, so an interrupted write falls back to the previous record
+ * (or to the defaults).
+ */
+#include "settings.h"
+#include "board.h"
+#include "quad.h"
+
+#include <stddef.h>
+
+#define REC_MAGIC     0x31534750U    /* "PGS1" */
+#define REC_VERSION   1U
+#define SLOTS         (SETTINGS_PAGE_BYTES / sizeof(rec_t))
+
+typedef struct {
+  uint32_t magic;
+  uint16_t version;
+  uint16_t ppr;
+  uint16_t wheel_mm;
+  uint16_t accel_mm_s2;
+  uint8_t  dir;          /* quad_dir_t */
+  uint8_t  pad[3];
+  uint32_t seq;          /* save counter, for diagnostics */
+  uint32_t reserved[2];
+  uint32_t crc;          /* CRC-32 of all bytes before it */
+} rec_t;
+
+_Static_assert(sizeof(rec_t) == 32U, "record must be 4 double words");
+
+static rec_t cur;        /* values in use */
+static rec_t saved;      /* what the flash holds (defaults if nothing valid) */
+static int from_flash;
+static uint32_t used;    /* slots in use */
+
+static const volatile rec_t *slot(uint32_t i)
+{
+  return (const volatile rec_t *)(SETTINGS_ADDR + i * sizeof(rec_t));
+}
+
+static uint32_t crc32(const void *data, size_t len)
+{
+  const uint8_t *p = data;
+  uint32_t crc = 0xFFFFFFFFU;
+
+  while (len--) {
+    crc ^= *p++;
+    for (int k = 0; k < 8; k++) {
+      crc = (crc >> 1) ^ (0xEDB88320U & (0U - (crc & 1U)));
+    }
+  }
+  return ~crc;
+}
+
+static int valid(const rec_t *r)
+{
+  return r->magic == REC_MAGIC && r->version == REC_VERSION &&
+         r->crc == crc32(r, offsetof(rec_t, crc)) &&
+         r->ppr >= SETTINGS_PPR_MIN && r->ppr <= SETTINGS_PPR_MAX &&
+         r->wheel_mm >= SETTINGS_WHEEL_MIN_MM && r->wheel_mm <= SETTINGS_WHEEL_MAX_MM &&
+         r->accel_mm_s2 <= SETTINGS_ACCEL_MAX_MM_S2 && r->dir <= (uint8_t)QUAD_REV;
+}
+
+static int erased(uint32_t i)
+{
+  const volatile uint32_t *w = (const volatile uint32_t *)slot(i);
+
+  for (size_t k = 0; k < sizeof(rec_t) / 4U; k++) {
+    if (w[k] != 0xFFFFFFFFU) {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static void set_defaults(rec_t *r)
+{
+  r->magic = REC_MAGIC;
+  r->version = REC_VERSION;
+  r->ppr = SETTINGS_PPR_DEFAULT;
+  r->wheel_mm = SETTINGS_WHEEL_DEFAULT_MM;
+  r->accel_mm_s2 = SETTINGS_ACCEL_DEFAULT_MM_S2;
+  r->dir = (uint8_t)QUAD_FWD;
+}
+
+void settings_init(void)
+{
+  set_defaults(&saved);
+  saved.seq = 0;
+  from_flash = 0;
+  used = 0;
+  for (uint32_t i = 0; i < SLOTS; i++) {
+    rec_t r;
+
+    if (erased(i)) {
+      break;                      /* records are written in order: the rest is free */
+    }
+    used = i + 1U;
+    r = *(const rec_t *)slot(i);
+    if (valid(&r)) {
+      saved = r;
+      from_flash = 1;
+    }
+  }
+  cur = saved;
+  quad_set_dir((quad_dir_t)cur.dir);
+}
+
+int settings_from_flash(void)
+{
+  return from_flash;
+}
+
+int settings_dirty(void)
+{
+  return cur.ppr != saved.ppr || cur.wheel_mm != saved.wheel_mm ||
+         cur.accel_mm_s2 != saved.accel_mm_s2 || (uint8_t)quad_dir() != saved.dir;
+}
+
+uint32_t settings_slots_used(void)
+{
+  return used;
+}
+
+uint32_t settings_ppr(void)
+{
+  return cur.ppr;
+}
+
+int settings_set_ppr(uint32_t ppr)
+{
+  if (ppr < SETTINGS_PPR_MIN || ppr > SETTINGS_PPR_MAX) {
+    return -1;
+  }
+  cur.ppr = (uint16_t)ppr;
+  return 0;
+}
+
+uint32_t settings_wheel_mm(void)
+{
+  return cur.wheel_mm;
+}
+
+int settings_set_wheel_mm(uint32_t mm)
+{
+  if (mm < SETTINGS_WHEEL_MIN_MM || mm > SETTINGS_WHEEL_MAX_MM) {
+    return -1;
+  }
+  cur.wheel_mm = (uint16_t)mm;
+  return 0;
+}
+
+uint32_t settings_accel_mm_s2(void)
+{
+  return cur.accel_mm_s2;
+}
+
+int settings_set_accel_mm_s2(uint32_t a)
+{
+  if (a > SETTINGS_ACCEL_MAX_MM_S2) {
+    return -1;
+  }
+  cur.accel_mm_s2 = (uint16_t)a;
+  return 0;
+}
+
+double settings_m_per_pulse(void)
+{
+  return 3.14159265358979 * (double)cur.wheel_mm / 1000.0 / (double)cur.ppr;
+}
+
+void settings_defaults(void)
+{
+  set_defaults(&cur);
+  quad_set_dir(QUAD_FWD);
+}
+
+int settings_save(void)
+{
+  rec_t r = cur;
+  uint32_t i = used;
+  const uint64_t *dw = (const uint64_t *)(const void *)&r;
+  int err = 0;
+
+  r.dir = (uint8_t)quad_dir();
+  r.pad[0] = r.pad[1] = r.pad[2] = 0;
+  r.seq = saved.seq + 1U;
+  r.reserved[0] = r.reserved[1] = 0;
+  r.crc = crc32(&r, offsetof(rec_t, crc));
+
+  HAL_FLASH_Unlock();
+  __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS | FLASH_FLAG_OPTVERR);
+  if (i >= SLOTS || !erased(i)) {
+    FLASH_EraseInitTypeDef e = {0};
+    uint32_t page_err = 0;
+
+    e.TypeErase = FLASH_TYPEERASE_PAGES;
+    e.Banks = FLASH_BANK_1;
+    e.Page = (SETTINGS_ADDR - FLASH_BASE) / FLASH_PAGE_SIZE;
+    e.NbPages = 1;
+    err = HAL_FLASHEx_Erase(&e, &page_err) != HAL_OK;
+    i = 0;
+  }
+  for (size_t k = 0; !err && k < sizeof(rec_t) / 8U; k++) {
+    err = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD,
+                            (uint32_t)slot(i) + 8U * k, dw[k]) != HAL_OK;
+  }
+  HAL_FLASH_Lock();
+
+  rec_t back = *(const rec_t *)slot(i);
+  if (err || !valid(&back) || back.seq != r.seq) {
+    used = SLOTS;                 /* force an erase on the next try */
+    return -1;
+  }
+  saved = back;
+  from_flash = 1;
+  used = i + 1U;
+  return 0;
+}

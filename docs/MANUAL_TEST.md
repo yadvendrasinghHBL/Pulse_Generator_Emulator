@@ -124,7 +124,7 @@ The last column shows which train speed this frequency means with **200 pulses p
 | `freq 1` | 500 ms/div (or roll mode) | 1 Hz | | | | 0.05 km/h |
 | `freq 10` | 50 ms/div | 10 Hz | | | | 0.5 km/h |
 | `freq 192.2` | 2 ms/div | 192.2 Hz | | | | 10 km/h |
-| `freq 1922.3` | 200 µs/div | 1922.3 Hz | | | | 100 km/h |
+| `freq 1922.16` | 200 µs/div | 1922.16 Hz | | | | 100 km/h |
 | `freq 4805.7` | 100 µs/div | 4805.7 Hz | | | | 250 km/h |
 | `freq 6000` | 50 µs/div | 5999.7 Hz (firmware shows the actual value) | | | | 312 km/h |
 | `freq 10000` | 50 µs/div | 10 kHz | | | | 520 km/h |
@@ -265,16 +265,16 @@ tests check what only a person can do: watch it live and break a channel.
 
 ### T13: Live view and fault detection (PLAN check 4.4)
 
-1. `dir fwd`, `start 1922.3`, then `monitor`. Expected: about `100.00` km/h, `90.0 fwd`, `OK`, distance rising.
+1. `dir fwd`, `start 1922.16`, then `monitor`. Expected: about `100.00` km/h, `90.0 fwd`, `OK`, distance rising.
 2. Press Enter, type `freq 961.2`, then `monitor` again. Expected: about `50.00` km/h. Press Enter.
 3. With `monitor` running, **pull the J8.7 wire** (B). Within 2.5 s: `FAULT B missing`. Put it back: `OK`.
 4. Pull the J8.6 wire (A): `FAULT A missing`. Put it back: `OK`.
 5. Press Enter, `stop`, `monitor`. Within 2.5 s: speed `0.00`, `standstill`. Press Enter.
-6. `stop`, `dir rev`, `start 1922.3`, `monitor`: `270.0 rev`, `OK`, distance falling. Press Enter, `stop low`, `dir fwd`.
+6. `stop`, `dir rev`, `start 1922.16`, `monitor`: `270.0 rev`, `OK`, distance falling. Press Enter, `stop low`, `dir fwd`.
 
 | Check | Expected | Measured | Pass? |
 |---|---|---|---|
-| 1922.3 Hz | 100.00 km/h, 90.0 fwd, OK | | |
+| 1922.16 Hz | 100.00 km/h, 90.0 fwd, OK | | |
 | 961.2 Hz | 50.00 km/h | | |
 | B wire pulled | FAULT B missing, OK again when back | | |
 | A wire pulled | FAULT A missing, OK again when back | | |

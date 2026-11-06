@@ -24,6 +24,7 @@
 #include "rx.h"
 #include "board.h"
 #include "console.h"
+#include "settings.h"
 
 #define TICKS_PER_S   80000000.0     /* TIM3 clock, PSC = 0 (APB1 = 80 MHz) */
 #define IC_FILTER     3U             /* ICxF = 0b0011: fCK_INT, N = 8 -> 100 ns */
@@ -205,7 +206,7 @@ static void recalc(void)
   capture_t s;
   uint64_t now;
   const double stand = RX_STANDSTILL_MS / 1000.0 * TICKS_PER_S;
-  const double m_per_pulse = 3.14159265358979 * RX_WHEEL_MM / 1000.0 / RX_PPR;
+  const double m_per_pulse = settings_m_per_pulse();
   double old_speed = val.speed_kmh;
 
   snapshot(&s, &now);

@@ -12,8 +12,7 @@
 
 #include <stdint.h>
 
-#define RX_PPR              200U    /* pulses per turn (stage 3 makes it a setting) */
-#define RX_WHEEL_MM         920U    /* wheel diameter */
+/* Pulses per turn and wheel diameter: shared with the outputs, settings.h */
 #define RX_STANDSTILL_MS    2000U   /* no edge for this long = standstill (Q7) */
 #define RX_PHASE_TOL_DEG    20.0    /* 90 +/- 20 degrees is OK (Q7) */
 #define RX_UPDATE_MS        500U    /* values are recalculated this often */
