@@ -143,6 +143,69 @@ $$n_{rpm} = \frac{f \cdot 60}{ppr} = \frac{v_{m/s} \cdot 60}{\pi \cdot D}$$
 
 Example: f = 1000 Hz → n = 1000 × 60 / 200 = **300 rpm**. 100 km/h → 27.778 × 60 / 2.8903 = **576.65 rpm**.
 
+### Frequency ↔ speed ↔ rpm conversion
+
+The frequency on the scope, the train speed and the wheel rpm are three views of the same motion.
+Each pulse is s = π × D / ppr of track, and each wheel turn is ppr pulses.
+
+**Frequency → speed**
+
+$$v_{m/s} = f \cdot s \qquad v_{km/h} = f \cdot s \cdot 3.6 = \frac{f \cdot \pi \cdot D \cdot 3.6}{ppr}$$
+
+Step by step, f = 1922.16 Hz at 200 ppr, 920 mm:
+
+1. Distance per pulse: s = π × 0.920 / 200 = 0.014451 m.
+2. Speed in m/s: v = 1922.16 × 0.014451 = 27.778 m/s.
+3. Speed in km/h: v = 27.778 × 3.6 = **100.0 km/h**.
+
+**Speed → frequency**
+
+$$f = \frac{v_{m/s}}{s} = \frac{v_{km/h} \cdot ppr}{3.6 \cdot \pi \cdot D}$$
+
+Step by step, v = 60 km/h:
+
+1. Speed in m/s: 60 / 3.6 = 16.667 m/s.
+2. Pulses per second: f = 16.667 / 0.014451 = **1153.3 Hz**.
+
+**Frequency ↔ rpm**
+
+$$n_{rpm} = \frac{f \cdot 60}{ppr} \qquad f = \frac{n_{rpm} \cdot ppr}{60}$$
+
+Example: f = 1153.3 Hz → n = 1153.3 × 60 / 200 = **346.0 rpm**; and 346.0 rpm × 200 / 60 = 1153.3 Hz.
+
+**Shortcut factors at the defaults (200 ppr, 920 mm)**
+
+| Conversion | Factor | Example |
+| --- | --- | --- |
+| Hz → km/h | × 0.052025 | 1000 Hz → 52.02 km/h |
+| km/h → Hz | × 19.2216 | 100 km/h → 1922.16 Hz |
+| Hz → rpm | × 0.3 | 1000 Hz → 300 rpm |
+| rpm → Hz | × 3.3333 | 500 rpm → 1666.67 Hz |
+| km/h → rpm | × 5.7665 | 100 km/h → 576.65 rpm |
+| rpm → km/h | × 0.17342 | 500 rpm → 86.71 km/h |
+
+**Conversion table at the defaults**
+
+| Frequency | Speed (km/h) | Speed (m/s) | Wheel rpm | Note |
+| --- | --- | --- | --- | --- |
+| 1 Hz | 0.052 | 0.014 | 0.30 | |
+| 10 Hz | 0.520 | 0.145 | 3.00 | |
+| 100 Hz | 5.202 | 1.445 | 30.00 | power-up frequency |
+| 192.22 Hz | 10.00 | 2.778 | 57.66 | |
+| 1000 Hz | 52.02 | 14.451 | 300.00 | |
+| 1922.16 Hz | 100.00 | 27.778 | 576.65 | |
+| 5000 Hz | 260.12 | 72.257 | 1500.00 | |
+| 10 000 Hz | 520.25 | 144.513 | 3000.00 | real OPG maximum |
+| 11 533 Hz | 600.00 | 166.667 | 3459.90 | default vmax |
+| 50 000 Hz | 2601.24 | 722.566 | 15 000.00 | emulator maximum |
+
+**Other ppr or wheel:** recalculate s first. Example: ppr 100, worn wheel 860 mm → s = π × 0.860 / 100 =
+0.027018 m, so 1000 Hz = 1000 × 0.027018 × 3.6 = **97.26 km/h** and 1000 × 60 / 100 = **600 rpm**. With
+fewer pulses per turn, the same frequency means a faster wheel.
+
+On the board: `freq` shows the frequency, and `speed` / `rpm` show the speed and rpm the outputs make.
+`rx` shows what the receiver measured.
+
 ### Pulse count and distance
 
 Complete pulses on A since the last start, and the track length they stand for. Negative in reverse.
