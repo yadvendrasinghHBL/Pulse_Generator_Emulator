@@ -15,6 +15,7 @@
 #include "cli.h"
 #include "console.h"
 #include "diag.h"
+#include "fault.h"
 #include "pulse.h"
 #include "quad.h"
 #include "rx.h"
@@ -143,6 +144,7 @@ int main(void)
     }
     rx_poll();
     speed_poll();
+    fault_poll();
     if (HAL_GetTick() - last_beat >= 500U) {
       last_beat += 500U;
       HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);

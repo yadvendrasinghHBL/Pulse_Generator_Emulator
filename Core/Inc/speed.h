@@ -36,6 +36,16 @@ int      speed_ramping(void);
 int      speed_moving(void);                 /* outputs running, or a ramp about to start them */
 double   speed_distance_m(void);             /* A pulses since start x distance per pulse, - in reverse */
 
+/* Wheel slip (pct > 0, traction) or slide (pct < 0, braking) for ms: the
+ * output frequency is the train speed x (1 + pct / 100), then back. Only
+ * while moving. 0 = OK, -1 = not moving or pct out of range. */
+#define SPEED_SLIP_MIN  (-90)
+#define SPEED_SLIP_MAX  200
+int      speed_set_slip(int pct, uint32_t ms);
+int      speed_slip_pct(void);                /* 0 = no slip */
+uint32_t speed_slip_left_ms(void);
+void     speed_slip_off(void);
+
 int      speed_set_mhz(uint32_t mhz);        /* `freq`: all outputs; 0 = OK, -1 = out of range */
 void     speed_start(void);                  /* `start`: all outputs at the set frequency */
 void     speed_stop(int force_low);          /* `stop`: all outputs; force_low = 0 holds the levels */

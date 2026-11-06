@@ -11,6 +11,7 @@
 #include "board.h"
 #include "console.h"
 #include "diag.h"
+#include "fault.h"
 #include "pulse.h"
 #include "quad.h"
 #include "rx.h"
@@ -166,6 +167,7 @@ static void cmd_status(int argc, char **argv)
   print_count("A/B ", quad_count());
   print_speed_line();
   print_settings_line();
+  fault_print();
   if (diag_measure(&vdda, &temp) == 0) {
     con_printf("VDDA %lu mV, temperature %ld C\n", vdda, temp);
   } else {
@@ -435,6 +437,111 @@ static void cmd_vmax(int argc, char **argv)
   print_settings_line();
 }
 
+/* Channel argument: "a" = A, "b" = B, "ab" = both (mask bits 0/1); 0 = not a channel */
+static uint32_t parse_channels(const char *s)
+{
+  if (strcmp(s, "a") == 0) {
+    return 1U;
+  }
+  if (strcmp(s, "b") == 0) {
+    return 2U;
+  }
+  if (strcmp(s, "ab") == 0) {
+    return 3U;
+  }
+  return 0U;
+}
+
+static void fault_usage(void)
+{
+  con_puts("ERR usage: fault | fault clear | fault <a|b> <ok|low|high> | fault phase <0..134|ok>\n"
+           "  | fault glitch <a|b|ab> <1..1000 per s> [width 1..50 us] | fault glitch off\n"
+           "  | fault drop <a|b|ab> <1 in 2..10000> | fault drop off\n"
+           "  | fault slip <-90..+200 %> <seconds 0.1..600> | fault slip off (slip only while moving)\n");
+}
+
+/* Sensor faults on the A/B outputs, to test a receiver's fault detection */
+static void cmd_fault(int argc, char **argv)
+{
+  uint32_t v;
+  uint32_t mask;
+  int ok = 0;
+
+  if (argc == 1) {
+    fault_print();
+    return;
+  }
+  if (argc == 2 && strcmp(argv[1], "clear") == 0) {
+    fault_clear();
+    ok = 1;
+  } else if (argc == 3 && (strcmp(argv[1], "a") == 0 || strcmp(argv[1], "b") == 0)) {
+    int ch = argv[1][0] == 'b';
+
+    if (strcmp(argv[2], "ok") == 0) {
+      ok = quad_set_force(ch, QUAD_CH_OK) == 0;
+    } else if (strcmp(argv[2], "low") == 0) {
+      ok = quad_set_force(ch, QUAD_CH_LOW) == 0;
+    } else if (strcmp(argv[2], "high") == 0) {
+      ok = quad_set_force(ch, QUAD_CH_HIGH) == 0;
+    }
+  } else if (argc == 3 && strcmp(argv[1], "phase") == 0) {
+    if (strcmp(argv[2], "ok") == 0) {
+      ok = quad_set_phase(QUAD_PHASE_DEFAULT) == 0;
+    } else {
+      ok = parse_fixed(argv[2], 0, QUAD_PHASE_MAX, &v) == 0 && quad_set_phase(v) == 0;
+    }
+  } else if (argc >= 3 && strcmp(argv[1], "glitch") == 0) {
+    uint32_t w = FAULT_GLITCH_WIDTH_DEFAULT;
+
+    if (argc == 3 && strcmp(argv[2], "off") == 0) {
+      ok = fault_set_glitch(0, 0, FAULT_GLITCH_WIDTH_DEFAULT) == 0;
+    } else if ((argc == 4 || argc == 5) && (mask = parse_channels(argv[2])) != 0U &&
+               parse_fixed(argv[3], 0, FAULT_GLITCH_MAX_PER_S, &v) == 0 && v > 0U &&
+               (argc == 4 || parse_fixed(argv[4], 0, FAULT_GLITCH_WIDTH_MAX, &w) == 0)) {
+      ok = fault_set_glitch(mask, v, w) == 0;
+    }
+  } else if (argc >= 3 && strcmp(argv[1], "drop") == 0) {
+    if (argc == 3 && strcmp(argv[2], "off") == 0) {
+      ok = quad_set_drop(0, 0) == 0 && quad_set_drop(1, 0) == 0;
+    } else if (argc == 4 && (mask = parse_channels(argv[2])) != 0U &&
+               parse_fixed(argv[3], 0, QUAD_DROP_MAX, &v) == 0 && v >= QUAD_DROP_MIN) {
+      ok = 1;
+      for (int ch = 0; ch < 2; ch++) {
+        if (mask & (1U << ch)) {
+          ok = ok && quad_set_drop(ch, v) == 0;
+        }
+      }
+    }
+  } else if (argc >= 3 && strcmp(argv[1], "slip") == 0) {
+    uint32_t ds;
+
+    if (argc == 3 && strcmp(argv[2], "off") == 0) {
+      speed_slip_off();
+      ok = 1;
+    } else if (argc == 4) {
+      const char *p = argv[2];
+      int neg = *p == '-';
+
+      if (*p == '-' || *p == '+') {
+        p++;
+      }
+      if (parse_fixed(p, 0, 200U, &v) == 0 && v > 0U && parse_fixed(argv[3], 1, 6000U, &ds) == 0 && ds > 0U) {
+        if (speed_set_slip(neg ? -(int)v : (int)v, ds * 100U)) {
+          con_puts("ERR slip only while moving, -90..+200 %\n");
+          return;
+        }
+        ok = 1;
+      }
+    }
+  }
+  if (!ok) {
+    fault_usage();
+    return;
+  }
+  con_puts("OK ");
+  fault_print();
+}
+
 /* Service brake: slow to standstill at decel, levels held at the end */
 static void cmd_brake(int argc, char **argv)
 {
@@ -582,6 +689,7 @@ static void cmd_monitor(int argc, char **argv)
   while (!con_line_pending()) {
     rx_poll();
     speed_poll();
+    fault_poll();
     if (HAL_GetTick() - beat >= 500U) {
       beat += 500U;
       HAL_GPIO_TogglePin(LED_GREEN_PORT, LED_GREEN_PIN);
@@ -717,6 +825,7 @@ static const cli_cmd_t commands[] = {
   { "speed",      "speed | speed <km/h>: drive at a speed, ramps at accel/decel", cmd_speed, 0 },
   { "rpm",        "rpm | rpm <n>: drive at a wheel rpm, ramps at accel/decel", cmd_rpm,  0 },
   { "brake",      "brake to standstill at decel, then hold the levels",  cmd_brake,      0 },
+  { "fault",      "fault | fault clear | a/b stuck, phase, glitch, drop, slip (see manual)", cmd_fault, 0 },
   { "ppr",        "ppr | ppr <n>: pulses per turn, 1..1000 (stopped)",   cmd_ppr,        0 },
   { "wheel",      "wheel | wheel <mm>: wheel diameter, 100..2000 (stopped)", cmd_wheel,  0 },
   { "accel",      "accel | accel <m/s2>: speed-up rate, 0..50, 0 = at once", cmd_accel,  0 },

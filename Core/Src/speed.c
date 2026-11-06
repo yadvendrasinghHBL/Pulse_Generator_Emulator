@@ -22,6 +22,8 @@ static double v_now;         /* m/s */
 static double v_target;      /* m/s */
 static int ramping;
 static uint32_t last_step;
+static int slip_pct;         /* wheel slip (+) or slide (-) in %, 0 = off */
+static uint32_t slip_end;    /* HAL tick when the slip ends */
 
 static int running(void)
 {
@@ -74,10 +76,11 @@ static void outputs_stop(int force_low)
   quad_stop(force_low);
 }
 
-/* Move to speed v (m/s > 0): retune, and start the outputs if they stand still */
+/* Move to speed v (m/s > 0): retune, and start the outputs if they stand still.
+ * During a wheel slip the wheel (and so the frequency) turns slip % faster. */
 static void drive_at(double v)
 {
-  uint32_t mhz = mhz_for(v);
+  uint32_t mhz = mhz_for(v * (1.0 + (double)slip_pct / 100.0));
 
   if (mhz != pulse_get_mhz()) {
     set_outputs_mhz(mhz);
@@ -89,6 +92,12 @@ static void drive_at(double v)
 
 void speed_poll(void)
 {
+  if (slip_pct != 0 && (int32_t)(HAL_GetTick() - slip_end) >= 0) {
+    slip_pct = 0;                 /* the wheel grips again */
+    if (running() && v_now > 0.0) {
+      drive_at(v_now);
+    }
+  }
   if (!ramping) {
     return;
   }
@@ -224,11 +233,42 @@ double speed_distance_m(void)
   return quad_dir() == QUAD_FWD ? d : -d;
 }
 
+int speed_set_slip(int pct, uint32_t ms)
+{
+  if (pct < SPEED_SLIP_MIN || pct > SPEED_SLIP_MAX || !running() || v_now <= 0.0) {
+    return -1;
+  }
+  slip_pct = pct;
+  slip_end = HAL_GetTick() + ms;
+  drive_at(v_now);
+  return 0;
+}
+
+int speed_slip_pct(void)
+{
+  return slip_pct;
+}
+
+uint32_t speed_slip_left_ms(void)
+{
+  int32_t left = (int32_t)(slip_end - HAL_GetTick());
+
+  return slip_pct != 0 && left > 0 ? (uint32_t)left : 0U;
+}
+
+void speed_slip_off(void)
+{
+  if (slip_pct != 0) {
+    slip_end = HAL_GetTick();     /* speed_poll restores the frequency */
+  }
+}
+
 int speed_set_mhz(uint32_t mhz)
 {
   if (set_outputs_mhz(mhz)) {
     return -1;
   }
+  slip_pct = 0;
   ramping = 0;
   if (running()) {
     v_now = (double)mhz / 1000.0 * settings_m_per_pulse();
@@ -240,6 +280,7 @@ int speed_set_mhz(uint32_t mhz)
 void speed_start(void)
 {
   outputs_start();
+  slip_pct = 0;
   ramping = 0;
   v_now = (double)pulse_get_mhz() / 1000.0 * settings_m_per_pulse();
   v_target = v_now;
@@ -248,6 +289,7 @@ void speed_start(void)
 void speed_stop(int force_low)
 {
   outputs_stop(force_low);
+  slip_pct = 0;
   ramping = 0;
   v_now = 0.0;
   v_target = 0.0;

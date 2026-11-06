@@ -37,4 +37,27 @@ int           quad_level_b(void);
 uint64_t      quad_count(void);           /* complete pulses on A since the last start */
 void          quad_irq_handler(void);
 
+/* Sensor faults (`fault` command). ch: 0 = A, 1 = B. Not saved; off after reset. */
+#define QUAD_PHASE_DEFAULT  90U       /* lag after lead, degrees */
+#define QUAD_PHASE_MAX      134U      /* lag compare must stay inside the counter period */
+#define QUAD_DROP_MIN       2U        /* drop 1 pulse in every n */
+#define QUAD_DROP_MAX       10000U
+
+typedef enum {
+  QUAD_CH_OK = 0,
+  QUAD_CH_LOW,                            /* stuck low (dead channel, open output) */
+  QUAD_CH_HIGH,                           /* stuck high */
+} quad_force_t;
+
+int           quad_set_force(int ch, quad_force_t f);   /* OK: back in step with the other channel */
+quad_force_t  quad_force(int ch);
+int           quad_set_phase(uint32_t deg);             /* 0..QUAD_PHASE_MAX; also while running */
+uint32_t      quad_phase(void);
+int           quad_set_drop(int ch, uint32_t every);    /* 0 = off */
+uint32_t      quad_drop(int ch);
+uint32_t      quad_dropped(int ch);                     /* pulses dropped since set */
+/* One short opposite pulse of width_ticks (80 MHz) on ch now. -1 = not now:
+ * not running, channel stuck, or a real toggle is too close (try again later). */
+int           quad_glitch(int ch, uint32_t width_ticks);
+
 #endif /* QUAD_H */

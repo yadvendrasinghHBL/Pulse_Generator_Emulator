@@ -374,6 +374,98 @@ def receiver_checks(b):
     b.cmd("stop low")
 
 
+def fault_checks(b):
+    """Sensor fault emulation. The receiver part needs the loopback wires (skipped without them)."""
+    b.cmd("stop low")
+    b.cmd("fault clear")
+    check(b.cmd("fault").startswith("faults: none"), "fault: none after fault clear")
+    for bad in ("fault c low", "fault a stuck", "fault phase 135", "fault glitch a 0", "fault glitch a 1001",
+                "fault glitch a 10 51", "fault glitch c 10", "fault drop a 1", "fault drop a 10001",
+                "fault slip 20 1", "fault slip -91 1"):
+        check(b.cmd(bad).startswith("ERR"), f"{bad} rejected")
+
+    for c in ("dir fwd", "accel 0", "decel 0"):
+        b.cmd(c)
+    b.cmd("start 1000")
+    time.sleep(1.6)
+    v = parse_rx(b.cmd("rx"))
+    if v is None or v["fa"] == 0:
+        print("[SKIP] fault checks with the receiver: no loopback wires")
+        b.cmd("stop low")
+        return
+
+    def rx_after(cmd, wait):
+        r = b.cmd(cmd)
+        time.sleep(wait)
+        return r, parse_rx(b.cmd("rx"))
+
+    # stuck channels
+    for ch, lvl in (("a", "low"), ("b", "high")):
+        r, v = rx_after(f"fault {ch} {lvl}", 2.6)
+        check(r.startswith("OK faults:") and f"{ch.upper()} stuck {lvl}" in r and
+              v["status"] == f"FAULT {ch.upper()} missing", f"fault {ch} {lvl} -> receiver FAULT {ch.upper()} missing",
+              v["status"])
+        r, v = rx_after(f"fault {ch} ok", 1.6)
+        check(v["status"] == "OK" and v["phase"] is not None and 89 <= v["phase"] <= 91,
+              f"fault {ch} ok -> back in step, 90 deg", f"{v['status']}, {v['phase']} deg")
+
+    # phase
+    r, v = rx_after("fault phase 45", 1.6)
+    check(v["phase"] is not None and 44 <= v["phase"] <= 46 and v["status"] == "FAULT phase",
+          "fault phase 45 -> receiver 45 deg, FAULT phase", f"{v['phase']} deg, {v['status']}")
+    r, v = rx_after("freq 2000", 1.6)
+    check(v["phase"] is not None and 44 <= v["phase"] <= 46 and abs(v["fa"] - 2000) < 1,
+          "phase 45 kept after freq 1000 -> 2000", f"{v['fa']} Hz, {v['phase']} deg")
+    b.cmd("freq 1000")
+    r, v = rx_after("fault phase 100", 1.6)
+    check(v["phase"] is not None and 99 <= v["phase"] <= 101 and v["status"] == "OK",
+          "fault phase 100 -> receiver 100 deg, OK (inside 90 +/- 20)", f"{v['phase']} deg, {v['status']}")
+    r, v = rx_after("fault phase ok", 1.6)
+    check(v["phase"] is not None and 89 <= v["phase"] <= 91, "fault phase ok -> 90 deg", f"{v['phase']} deg")
+
+    # dropped pulses
+    r, v = rx_after("fault drop a 10", 1.6)
+    check(abs(v["fa"] - 900) < 5 and abs(v["fb"] - 1000) < 1, "fault drop a 10 -> A 900 Hz, B 1000 Hz",
+          f"A {v['fa']} Hz, B {v['fb']} Hz")
+    r, v = rx_after("fault drop b 4", 1.6)
+    check(abs(v["fb"] - 750) < 5, "fault drop b 4 -> B 750 Hz", f"A {v['fa']} Hz, B {v['fb']} Hz")
+    check(re.search(r"drop A 1 in 10 \((\d+) dropped\)", b.cmd("fault")) is not None, "fault shows the dropped count")
+    r, v = rx_after("fault drop off", 1.6)
+    check(abs(v["fa"] - 1000) < 1 and abs(v["fb"] - 1000) < 1 and v["status"] == "OK",
+          "fault drop off -> A/B 1000 Hz, OK", f"A {v['fa']} Hz, B {v['fb']} Hz, {v['status']}")
+
+    # glitches: each one adds a rising edge on that input
+    r, v = rx_after("fault glitch a 100", 1.6)
+    check(abs(v["fa"] - 1100) < 15 and abs(v["fb"] - 1000) < 1, "fault glitch a 100 -> A about 1100 Hz",
+          f"A {v['fa']} Hz, B {v['fb']} Hz")
+    r, v = rx_after("fault glitch off", 1.6)
+    check(abs(v["fa"] - 1000) < 1, "fault glitch off -> A 1000 Hz", f"A {v['fa']} Hz")
+
+    # wheel slip and slide: the receiver sees the wheel, the speed model keeps the train speed
+    b.cmd("speed 100")
+    time.sleep(1.2)
+    r = b.cmd("fault slip 20 3")
+    t0 = b.sent_at
+    sleep_until(t0 + 1.6)
+    v = parse_rx(b.cmd("rx"))
+    s = parse_speed(b.cmd("speed"))
+    check(abs(v["speed"] - 120) < 0.5 and s is not None and s["now"] == 100.0,
+          "fault slip 20 -> receiver 120 km/h, train 100 km/h", f"rx {v['speed']} km/h, model {s and s['now']} km/h")
+    sleep_until(t0 + 4.2)
+    v = parse_rx(b.cmd("rx"))
+    check(abs(v["speed"] - 100) < 0.5 and "slip +" not in b.cmd("fault"), "slip ends after 3 s -> 100 km/h",
+          f"rx {v['speed']} km/h")
+    r, v = rx_after("fault slip -30 5", 1.6)
+    check(abs(v["speed"] - 70) < 0.5, "fault slip -30 (slide) -> receiver 70 km/h", f"rx {v['speed']} km/h")
+
+    b.cmd("fault clear")
+    time.sleep(1.6)
+    v = parse_rx(b.cmd("rx"))
+    check(b.cmd("fault").startswith("faults: none") and abs(v["speed"] - 100) < 0.5 and v["status"] == "OK",
+          "fault clear -> healthy, 100 km/h, OK", f"{v['speed']} km/h, {v['status']}")
+    b.cmd("stop low")
+
+
 def main():
     path = os.environ.get("PORT", "/dev/ttyUSB0")
     if not os.path.exists(path):
@@ -443,6 +535,7 @@ def main():
 
         speed_checks(b)
         receiver_checks(b)
+        fault_checks(b)
 
     failed = results.count(False)
     print(f"\n{'ALL CHECKS PASSED' if not failed else f'FAILED: {failed} of {len(results)} checks'}"
