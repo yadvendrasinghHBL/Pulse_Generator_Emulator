@@ -122,10 +122,12 @@ int main(void)
   diag_print_info();
   int fails = diag_post();
   board_led(LED_ORANGE_PORT, LED_ORANGE_PIN, fails != 0);
-  con_printf("Settings %s: %lu ppr, wheel %lu mm, accel %lu.%03lu m/s2, dir %s\n",
+  con_printf("Settings %s: %lu ppr, wheel %lu mm, accel %lu.%03lu m/s2, decel %lu.%03lu m/s2, "
+             "vmax %lu km/h, dir %s\n",
              settings_from_flash() ? "from flash" : "defaults (nothing saved)",
              settings_ppr(), settings_wheel_mm(), settings_accel_mm_s2() / 1000U,
-             settings_accel_mm_s2() % 1000U, quad_dir() == QUAD_FWD ? "fwd" : "rev");
+             settings_accel_mm_s2() % 1000U, settings_decel_mm_s2() / 1000U,
+             settings_decel_mm_s2() % 1000U, settings_vmax_kmh(), quad_dir() == QUAD_FWD ? "fwd" : "rev");
   con_printf("Outputs %s and %s: off. Type 'start' to begin, 'help' for commands.\n",
              PULSE1_NAME, QUAD_NAME);
   cli_prompt();

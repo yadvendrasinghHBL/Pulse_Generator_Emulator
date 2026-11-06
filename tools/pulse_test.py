@@ -104,11 +104,12 @@ def parse_rx(r):
         ph = re.search(r"^phase (?:([\d.]+) deg (forward|reverse)|-)", r, re.M)
         sp = re.search(r"^speed ([\d.]+) km/h \(([\d.]+) rpm\)", r, re.M)
         pu = re.search(r"pulses (-?\d+)", r)
+        le = re.search(r"lost edges (\d+)", r)
         st = re.search(r"^receiver .*: (.+)$", r, re.M)
         return {
             "fa": float(f[0][1]), "da": float(f[0][2]), "fb": float(f[1][1]), "db": float(f[1][2]),
             "phase": float(ph.group(1)) if ph.group(1) else None, "dir": ph.group(2),
-            "speed": float(sp.group(1)), "rpm": float(sp.group(2)), "pulses": int(pu.group(1)), "status": st.group(1).strip(),
+            "speed": float(sp.group(1)), "rpm": float(sp.group(2)), "pulses": int(pu.group(1)), "lost": int(le.group(1)), "status": st.group(1).strip(),
         }
     except (AttributeError, IndexError, ValueError):
         return None
@@ -116,15 +117,16 @@ def parse_rx(r):
 
 def parse_settings(r):
     """ppr, wheel, accel, dir and save state from the `settings:` line, or None."""
-    m = re.search(r"settings: (\d+) ppr, wheel (\d+) mm .*, accel ([\d.]+) m/s2, dir (fwd|rev): (.+)$", r, re.M)
+    m = re.search(r"settings: (\d+) ppr, wheel (\d+) mm .*, accel ([\d.]+) m/s2, decel ([\d.]+) m/s2, "
+                  r"vmax (\d+) km/h, dir (fwd|rev): (.+)$", r, re.M)
     if not m:
         return None
-    return {"ppr": int(m.group(1)), "wheel": int(m.group(2)), "accel": m.group(3), "dir": m.group(4),
-            "state": m.group(5).strip()}
+    return {"ppr": int(m.group(1)), "wheel": int(m.group(2)), "accel": m.group(3), "decel": m.group(4),
+            "vmax": int(m.group(5)), "dir": m.group(6), "state": m.group(7).strip()}
 
 
 def parse_speed(r):
-    m = re.search(r"^(?:OK )?speed ([\d.]+) km/h, target ([\d.]+) km/h, accel [\d.]+ m/s2: (\w+), "
+    m = re.search(r"^(?:OK )?speed ([\d.]+) km/h, target ([\d.]+) km/h, accel [\d.]+ m/s2, decel [\d.]+ m/s2: (\w+), "
                   r"distance (-?[\d.]+) m", r, re.M)
     if not m:
         return None
@@ -158,11 +160,21 @@ def speed_checks(b):
     check(orig is not None, "settings line parses", str(orig))
     if orig is None:
         return
-    for c in ("ppr 200", "wheel 920", "accel 0", "dir fwd"):
+    for c in ("ppr 200", "wheel 920", "accel 0", "decel 0", "vmax 600", "dir fwd"):
         b.cmd(c)
-    for bad in ("ppr 0", "ppr 1001", "ppr 2.5", "wheel 99", "wheel 2001", "accel 10.001", "accel -1",
-                "speed abc", "speed 1.234", "speed 2602"):
+    for bad in ("ppr 0", "ppr 1001", "ppr 2.5", "wheel 99", "wheel 2001", "accel 50.001", "accel -1",
+                "decel 50.001", "vmax 0", "vmax 10000", "vmax 1.5", "speed abc", "speed 1.234", "speed 600.01"):
         check(b.cmd(bad).startswith("ERR"), f"{bad} rejected")
+    r = b.cmd("speed 600")
+    check(r.startswith("OK speed") and near(ab_hz(r), hz_for(600)), "speed 600 = vmax accepted",
+          f"A/B {ab_hz(r)} Hz (expect {hz_for(600):.1f})")
+    b.cmd("speed 0")
+    b.cmd("vmax 100")
+    check(b.cmd("speed 100.01").startswith("ERR") and b.cmd("speed 100").startswith("OK"),
+          "vmax 100: speed 100.01 rejected, 100 accepted")
+    check(b.cmd("rpm 577").startswith("ERR"), "vmax 100 also limits rpm (577 rpm > 100 km/h)")
+    b.cmd("speed 0")
+    b.cmd("vmax 600")
 
     r = b.cmd("speed 100")
     s = parse_speed(r)
@@ -216,37 +228,62 @@ def speed_checks(b):
     v = parse_rx(b.cmd("rx"))
     if v is not None and v["fa"] > 0:
         check(abs(v["speed"] - 36) < 0.2, "receiver speed matches the speed model (loopback)", f"{v['speed']} km/h")
-    r = b.cmd("speed 0")
+    # brake at decel 10 m/s2: 36 km/h (10 m/s) -> 0 in 1 s
+    b.cmd("decel 10")
+    r = b.cmd("brake")
     t0 = b.sent_at
-    sleep_until(t0 + 2.6)
+    s = parse_speed(r)
+    check(r.startswith("OK speed") and s is not None and s["state"] == "ramping" and s["target"] == 0,
+          "brake starts a ramp to 0 at decel", str(s))
+    sleep_until(t0 + 0.5)
     s = parse_speed(b.cmd("speed"))
-    check(s is not None and s["state"] == "standstill" and s["now"] == 0 and s["dist"] > 15
+    el = b.sent_at - t0
+    check(s is not None and s["state"] == "ramping" and abs(s["now"] - (36 - 36 * el)) < 4,
+          "brake at decel 10 after about 0.5 s", f"{s and s['now']} km/h after {el:.2f} s (expect {36 - 36 * el:.1f} +/- 4)")
+    sleep_until(t0 + 1.5)
+    s = parse_speed(b.cmd("speed"))
+    check(s is not None and s["state"] == "standstill" and s["now"] == 0 and s["dist"] > 10
           and "stopped" in b.cmd("status"),
-          "speed 0 brakes to standstill in 2 s, outputs stopped, distance kept", str(s))
+          "brake reaches standstill in 1 s, outputs stopped, distance kept", str(s))
+
+    # top rate: accel 50 m/s2, 0 -> 180 km/h (50 m/s) in 1 s
+    b.cmd("accel 50")
+    b.cmd("speed 180")
+    t0 = b.sent_at
+    sleep_until(t0 + 1.4)
+    r = b.cmd("speed")
+    s = parse_speed(r)
+    check(s is not None and s["state"] == "steady" and s["now"] == 180.0 and near(ab_hz(r), hz_for(180)),
+          "accel 50: 0 -> 180 km/h within 1.4 s", f"{s}, A/B {ab_hz(r)} Hz")
+    b.cmd("decel 0")
+    s = parse_speed(b.cmd("brake"))
+    check(s is not None and s["state"] == "standstill", "brake with decel 0 stops at once", str(s))
 
     # settings survive a reset
-    for c in ("ppr 123", "wheel 850", "accel 1.25", "dir rev"):
+    for c in ("ppr 123", "wheel 850", "accel 1.25", "decel 2.5", "vmax 450", "dir rev"):
         b.cmd(c)
     r = b.cmd("save")
     check(r.startswith("OK saved"), "save", r.split("\n")[0])
     b.cmd("defaults")
     s = parse_settings(b.cmd("ppr"))
-    check(s is not None and (s["ppr"], s["wheel"], s["accel"], s["dir"]) == (200, 920, "0.000", "fwd")
-          and s["state"].startswith("not saved"), "defaults: 200 ppr, 920 mm, accel 0, fwd, not saved", str(s))
+    check(s is not None and (s["ppr"], s["wheel"], s["accel"], s["decel"], s["vmax"], s["dir"])
+          == (200, 920, "0.000", "0.000", 600, "fwd") and s["state"].startswith("not saved"),
+          "defaults: 200 ppr, 920 mm, accel/decel 0, vmax 600, fwd, not saved", str(s))
     b.cmd("reset")
     if not wait_for_prompt(b.port):
         check(False, "board answers after reset")
         return
     s = parse_settings(b.cmd("ppr"))
-    check(s is not None and (s["ppr"], s["wheel"], s["accel"], s["dir"], s["state"]) == (123, 850, "1.250", "rev", "saved"),
-          "settings loaded from flash after reset", str(s))
+    check(s is not None and (s["ppr"], s["wheel"], s["accel"], s["decel"], s["vmax"], s["dir"], s["state"])
+          == (123, 850, "1.250", "2.500", 450, "rev", "saved"), "settings loaded from flash after reset", str(s))
 
-    for c in (f"ppr {orig['ppr']}", f"wheel {orig['wheel']}", f"accel {orig['accel']}", f"dir {orig['dir']}"):
-        b.cmd(c)
+    keys = ("ppr", "wheel", "accel", "decel", "vmax", "dir")
+    for k in keys:
+        b.cmd(f"{k} {orig[k]}")
     r = b.cmd("save")
     s = parse_settings(r)
-    check(r.startswith("OK saved") and s is not None and (s["ppr"], s["wheel"], s["accel"], s["dir"])
-          == (orig["ppr"], orig["wheel"], orig["accel"], orig["dir"]), "original settings saved back", str(s))
+    check(r.startswith("OK saved") and s is not None and all(s[k] == orig[k] for k in keys),
+          "original settings saved back", str(s))
 
 
 def receiver_checks(b):
@@ -305,6 +342,26 @@ def receiver_checks(b):
     v = parse_rx(b.cmd("rx"))
     check(v["status"] == "standstill" and v["speed"] == 0, "rx standstill 2 s after stop",
           f"{v['status']}, {v['speed']} km/h")
+
+    # high frequencies: 10 kHz (the real OPG's top, 520 km/h) and 50 kHz (the emulator's top)
+    for hz in (10000, 50000):
+        b.cmd("stop low")
+        lost0 = parse_rx(b.cmd("rx"))["lost"]
+        b.cmd(f"start {hz}")
+        time.sleep(1.6)
+        v = parse_rx(b.cmd("rx"))
+        if v is None:
+            check(False, f"rx reply parses at {hz} Hz")
+            continue
+        check(abs(v["fa"] - hz) <= hz * 1e-4 and abs(v["fb"] - hz) <= hz * 1e-4, f"rx frequency A/B at {hz} Hz",
+              f"A {v['fa']} Hz, B {v['fb']} Hz (expect {hz} +/- 0.01 %)")
+        check(49 <= v["da"] <= 51 and 49 <= v["db"] <= 51 and v["phase"] is not None and 88 <= v["phase"] <= 92
+              and v["status"] == "OK", f"rx duty, phase, status at {hz} Hz",
+              f"duty A {v['da']} %, B {v['db']} %, phase {v['phase']} deg, {v['status']}")
+        check(abs(v["speed"] - hz * kmh / 1000) < hz * kmh / 1000 * 1e-3, f"rx speed at {hz} Hz",
+              f"{v['speed']} km/h (expect {hz * kmh / 1000:.2f})")
+        check(v["lost"] == lost0, f"rx no lost edges at {hz} Hz", f"lost edges {lost0} -> {v['lost']}")
+        b.cmd("stop low")
 
     b.cmd("start 1000")
     b.port.write(b"monitor\r")

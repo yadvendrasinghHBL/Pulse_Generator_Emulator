@@ -1,7 +1,8 @@
 /*
  * Settings that survive a reset: pulses per turn, wheel diameter,
- * acceleration and direction. The outputs (speed model) and the receiver use
- * the same pulses per turn and wheel (decided by the user, stage 3).
+ * acceleration, deceleration, speed limit (vmax) and direction. The outputs
+ * (speed model) and the receiver use the same pulses per turn and wheel
+ * (decided by the user, stage 3).
  *
  * Changes apply at once but reach the flash only with settings_save()
  * (`save`), so typing values does not wear the flash. Storage: the last flash
@@ -21,8 +22,12 @@
 #define SETTINGS_WHEEL_MIN_MM       100U
 #define SETTINGS_WHEEL_MAX_MM       2000U
 #define SETTINGS_WHEEL_DEFAULT_MM   920U          /* Q1 */
-#define SETTINGS_ACCEL_MAX_MM_S2    10000U        /* 10 m/s2 */
+#define SETTINGS_ACCEL_MAX_MM_S2    50000U        /* 50 m/s2, for accel and decel */
 #define SETTINGS_ACCEL_DEFAULT_MM_S2 0U           /* 0 = a new speed applies at once */
+#define SETTINGS_DECEL_DEFAULT_MM_S2 0U
+#define SETTINGS_VMAX_MIN_KMH       1U
+#define SETTINGS_VMAX_MAX_KMH       9999U
+#define SETTINGS_VMAX_DEFAULT_KMH   600U          /* highest speed `speed`/`rpm` accept */
 
 /* Load the last saved record (or the defaults) and apply the direction.
  * Call after quad_init(), before anything starts the outputs. */
@@ -35,11 +40,15 @@ uint32_t settings_ppr(void);
 int      settings_set_ppr(uint32_t ppr);          /* 0 = OK, -1 = out of range */
 uint32_t settings_wheel_mm(void);
 int      settings_set_wheel_mm(uint32_t mm);
-uint32_t settings_accel_mm_s2(void);
+uint32_t settings_accel_mm_s2(void);              /* speeding up */
 int      settings_set_accel_mm_s2(uint32_t a);
+uint32_t settings_decel_mm_s2(void);              /* slowing down (`speed` lower, `brake`) */
+int      settings_set_decel_mm_s2(uint32_t a);
+uint32_t settings_vmax_kmh(void);                 /* speed limit for `speed` and `rpm` */
+int      settings_set_vmax_kmh(uint32_t kmh);
 double   settings_m_per_pulse(void);              /* pi x wheel / ppr */
 
-/* Defaults in RAM (200 ppr, 920 mm, accel 0, forward); not saved until settings_save().
+/* Defaults in RAM (200 ppr, 920 mm, accel 0, decel 0, vmax 600 km/h, forward); not saved until settings_save().
  * The outputs must be stopped (the direction changes). */
 void     settings_defaults(void);
 /* Write the current values (and the direction) to flash: 0 = OK, -1 = flash error.

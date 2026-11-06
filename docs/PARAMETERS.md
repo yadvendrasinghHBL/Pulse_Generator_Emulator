@@ -37,7 +37,9 @@ after `save`, and `defaults` restores them.
 | --- | --- | --- | --- | --- |
 | Pulses per turn | `ppr <n>` | 1 – 1000 | 200 | no |
 | Wheel diameter | `wheel <mm>` | 100 – 2000 mm | 920 mm | no |
-| Acceleration (ramp rate) | `accel <m/s²>` | 0 – 10 m/s², 3 decimals | 0 (no ramp) | yes |
+| Acceleration (speed-up rate) | `accel <m/s²>` | 0 – 50 m/s², 3 decimals | 0 (at once) | yes |
+| Deceleration (slow-down rate) | `decel <m/s²>` | 0 – 50 m/s², 3 decimals | 0 (at once) | yes |
+| Speed limit | `vmax <km/h>` | 1 – 9999 km/h | 600 km/h | yes |
 | Direction | `dir fwd` / `dir rev` | forward, reverse | forward | no |
 
 ### Pulses per turn (ppr)
@@ -61,13 +63,24 @@ Example: assumed 920 mm, real 860 mm → 920 / 860 − 1 = **+7.0 %** speed and 
 
 ### Acceleration (accel)
 
-How fast `speed` and `rpm` change the speed, in m/s², used for speeding up and for braking. 0 means a new
-speed applies at once. A ramp from v₁ to v₂ (in m/s) takes:
+How fast `speed` and `rpm` change the speed, in m/s². **accel** is used when the speed goes up,
+**decel** when it goes down (`speed` lower, `speed 0`, `brake`). 0 means the new speed applies at once.
+A ramp from v₁ to v₂ (in m/s) at rate a takes:
 
 $$t = \frac{|v_2 - v_1|}{a} \qquad d = \frac{|v_2^2 - v_1^2|}{2a}$$
 
 Example: 0 → 100 km/h (27.778 m/s) at a = 0.5 m/s² takes 27.778 / 0.5 = **55.6 s** and covers
 27.778² / (2 × 0.5) = **771.6 m**. Useful rule: 1 m/s² = 3.6 km/h per second.
+At the top rate, 50 m/s² = 180 km/h per second: 0 → 600 km/h takes 3.3 s.
+
+### Speed limit (vmax)
+
+The highest speed `speed` and `rpm` accept (`freq` is not limited). The real limit is the lower of vmax
+and the 50 kHz output limit:
+
+$$v_{max} = \min\left(v_{vmax},\; f_{max} \cdot s \cdot 3.6\right)$$
+
+Example: vmax 600 km/h at the defaults → max **600 km/h = 11 533 Hz = 3459.9 rpm**. `speed 600.01` is refused.
 
 ### Direction (dir)
 
@@ -140,12 +153,13 @@ Example: N = 69 198 pulses → d = 69 198 × 0.014451 m = **1000 m**. So 1 km = 
 
 ### Limits
 
-The highest speed and rpm are set by the 50 kHz output limit (the real OPG goes to 10 kHz):
+The highest speed and rpm are set by vmax (default 600 km/h) or, if lower, by the 50 kHz output limit
+(the real OPG goes to 10 kHz):
 
 $$v_{max} = f_{max} \cdot s \cdot 3.6 \qquad n_{max} = \frac{f_{max} \cdot 60}{ppr}$$
 
-Example: at 200 ppr, 920 mm → v_max = **2601.24 km/h** (520.25 km/h at 10 kHz) and n_max = **15 000 rpm**.
-(The firmware rounds the limit down and shows 2601.23 km/h.)
+Example: at 200 ppr, 920 mm the 50 kHz limit is **2601.24 km/h** (520.25 km/h at 10 kHz) and
+**15 000 rpm**, so with the default vmax the limit is **600 km/h = 3459.9 rpm**. Set `vmax 2601` to reach 50 kHz.
 
 ### Timer resolution (actual frequency)
 
@@ -223,6 +237,8 @@ Example: 50.00 → 50.90 km/h in 0.5 s → (0.90 / 3.6) / 0.5 = **0.50 m/s²**.
 | `FAULT phase` | both move, φ outside the window | damaged disc or bad input |
 
 The slowest speed not read as standstill is one edge per 2 s: f = 0.5 Hz = 0.026 km/h at the defaults.
+The fastest tested is **50 kHz** (2601.24 km/h): frequency, duty 50.0 %, phase 90.0° and no lost edges
+(board 1, loopback, 2026-11-06).
 
 ## 5. Worked example: one train journey
 
@@ -269,8 +285,9 @@ Values for 200 ppr and a 920 mm wheel.
 | Distance d | N × s | m | 1 km = 69 198 pulses |
 | Ramp time | Δv / a | s | 0 → 100 km/h at 0.5 m/s² = 55.6 |
 | Ramp distance | Δ(v²) / (2a) | m | 0 → 100 km/h at 0.5 m/s² = 771.6 |
-| Max speed | 50 000 × s × 3.6 | km/h | 2601.24 (10 kHz: 520.25) |
-| Max rpm | 50 000 × 60 / ppr | rpm | 15 000 |
+| Max speed | min(vmax, 50 000 × s × 3.6) | km/h | 600 (vmax); 50 kHz = 2601.24; 10 kHz = 520.25 |
+| Max rpm | max speed / (π × D) × 60 | rpm | 3459.9 at 600 km/h; 15 000 at 50 kHz |
+| Braking time / distance | v / decel, v² / (2 × decel) | s, m | 100 km/h at decel 1 = 27.8 s, 385.8 m |
 | Wheel-wear error | D_assumed / D_real − 1 | % | 920 vs 860 mm = +7.0 |
 | Receiver standstill | no edge for 2 s | – | below 0.5 Hz = 0.026 km/h |
 | Receiver phase OK | 90° ± 20° fwd, 270° ± 20° rev | ° | 70–110°, 250–290° |

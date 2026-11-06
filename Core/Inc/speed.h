@@ -19,12 +19,15 @@
 #define SPEED_STEP_MS   20U     /* ramp step: 50 frequency updates per second */
 
 void     speed_poll(void);                   /* call from every loop that waits */
-/* Target speed in 0.01 km/h. 0 = OK, -1 = above speed_max_ckmh() or below 0.01 Hz */
+/* Target speed in 0.01 km/h, ramped at accel (up) or decel (down).
+ * 0 = OK, -1 = above speed_max_ckmh() (vmax or 50 kHz) or below 0.01 Hz */
 int      speed_set_target_ckmh(uint32_t ckmh);
-uint32_t speed_max_ckmh(void);               /* speed at 50 kHz for the current ppr/wheel */
+uint32_t speed_max_ckmh(void);               /* lower of vmax and the speed at 50 kHz */
 /* Same as a target in wheel turns per minute, 0.01 rpm (rpm = f x 60 / ppr) */
 int      speed_set_target_crpm(uint32_t crpm);
-uint32_t speed_max_crpm(void);               /* rpm at 50 kHz for the current ppr */
+/* `brake`: slow to standstill at decel (0 = at once), then stop with the levels held */
+void     speed_brake(void);
+uint32_t speed_max_crpm(void);               /* rpm at speed_max_ckmh() */
 double   speed_rpm(void);                    /* wheel rpm now */
 double   speed_target_rpm(void);
 double   speed_kmh(void);                    /* speed now; 0 while the outputs are not running */

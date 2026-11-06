@@ -245,12 +245,13 @@ static void cmd_dir(int argc, char **argv)
   print_output_line();
 }
 
-/* m/s2 as stored (mm/s2) */
+/* Ramp rates as stored (mm/s2), printed in m/s2 */
 static void print_accel(void)
 {
   uint32_t a = settings_accel_mm_s2();
+  uint32_t d = settings_decel_mm_s2();
 
-  con_printf("accel %lu.%03lu m/s2", a / 1000U, a % 1000U);
+  con_printf("accel %lu.%03lu m/s2, decel %lu.%03lu m/s2", a / 1000U, a % 1000U, d / 1000U, d % 1000U);
 }
 
 static void print_speed_line(void)
@@ -279,7 +280,7 @@ static void print_settings_line(void)
   print_fixed(settings_m_per_pulse() * 1000.0, 3);
   con_printf(" mm per pulse, max %lu.%02lu km/h), ", max / 100U, max % 100U);
   print_accel();
-  con_printf(", dir %s: %s\n", quad_dir() == QUAD_FWD ? "fwd" : "rev",
+  con_printf(", vmax %lu km/h, dir %s: %s\n", settings_vmax_kmh(), quad_dir() == QUAD_FWD ? "fwd" : "rev",
              settings_dirty() ? "not saved (type save)"
              : (settings_from_flash() ? "saved" : "defaults, nothing saved"));
 }
@@ -305,8 +306,8 @@ static void cmd_speed(int argc, char **argv)
   if (speed_set_target_ckmh(ckmh)) {
     uint32_t max = speed_max_ckmh();
 
-    con_printf("ERR speed must be 0 or give 0.01..50000 Hz: max %lu.%02lu km/h at %lu ppr, wheel %lu mm\n",
-               max / 100U, max % 100U, settings_ppr(), settings_wheel_mm());
+    con_printf("ERR speed must be 0 or 0.01 Hz..max: max %lu.%02lu km/h (vmax %lu km/h, 50 kHz at %lu ppr, wheel %lu mm)\n",
+               max / 100U, max % 100U, settings_vmax_kmh(), settings_ppr(), settings_wheel_mm());
     return;
   }
   con_puts("OK ");
@@ -331,8 +332,8 @@ static void cmd_rpm(int argc, char **argv)
   if (speed_set_target_crpm(crpm)) {
     uint32_t max = speed_max_crpm();
 
-    con_printf("ERR rpm must be 0 or give 0.01..50000 Hz: max %lu.%02lu rpm at %lu ppr\n",
-               max / 100U, max % 100U, settings_ppr());
+    con_printf("ERR rpm must be 0 or 0.01 Hz..max: max %lu.%02lu rpm (vmax %lu km/h, 50 kHz at %lu ppr)\n",
+               max / 100U, max % 100U, settings_vmax_kmh(), settings_ppr());
     return;
   }
   con_puts("OK ");
@@ -383,7 +384,8 @@ static void cmd_wheel(int argc, char **argv)
   print_settings_line();
 }
 
-static void cmd_accel(int argc, char **argv)
+/* accel / decel: same range and format; 0 = the speed changes at once */
+static void rate_cmd(int argc, char **argv, int decel)
 {
   uint32_t a;
 
@@ -392,12 +394,57 @@ static void cmd_accel(int argc, char **argv)
     return;
   }
   if (argc != 2 || parse_fixed(argv[1], 3, SETTINGS_ACCEL_MAX_MM_S2, &a)) {
-    con_puts("ERR usage: accel | accel <m/s2 0..10, up to 3 decimals; 0 = no ramp>\n");
+    con_printf("ERR usage: %s | %s <m/s2 0..%u, up to 3 decimals; 0 = at once>\n",
+               argv[0], argv[0], SETTINGS_ACCEL_MAX_MM_S2 / 1000U);
     return;
   }
-  settings_set_accel_mm_s2(a);
+  if (decel) {
+    settings_set_decel_mm_s2(a);
+  } else {
+    settings_set_accel_mm_s2(a);
+  }
   con_puts("OK ");
   print_settings_line();
+}
+
+static void cmd_accel(int argc, char **argv)
+{
+  rate_cmd(argc, argv, 0);
+}
+
+static void cmd_decel(int argc, char **argv)
+{
+  rate_cmd(argc, argv, 1);
+}
+
+/* Speed limit for `speed` and `rpm`; also while moving (a lower limit does not
+ * slow a train already above it: the next `speed` must respect it) */
+static void cmd_vmax(int argc, char **argv)
+{
+  uint32_t kmh;
+
+  if (argc == 1) {
+    print_settings_line();
+    return;
+  }
+  if (argc != 2 || parse_fixed(argv[1], 0, SETTINGS_VMAX_MAX_KMH, &kmh) || settings_set_vmax_kmh(kmh)) {
+    con_printf("ERR usage: vmax | vmax <km/h %u..%u>\n", SETTINGS_VMAX_MIN_KMH, SETTINGS_VMAX_MAX_KMH);
+    return;
+  }
+  con_puts("OK ");
+  print_settings_line();
+}
+
+/* Service brake: slow to standstill at decel, levels held at the end */
+static void cmd_brake(int argc, char **argv)
+{
+  if (argc != 1) {
+    con_puts("ERR usage: brake\n");
+    return;
+  }
+  speed_brake();
+  con_puts("OK ");
+  print_speed_line();
 }
 
 static void cmd_save(int argc, char **argv)
@@ -667,13 +714,16 @@ static const cli_cmd_t commands[] = {
   { "start",      "start | start <Hz>: J8.1 and A/B (J8.6, J8.7)",       cmd_start,      0 },
   { "stop",       "stop | stop low: stop, hold the levels or force low", cmd_stop,       0 },
   { "dir",        "dir | dir fwd | dir rev: which channel leads (stopped)", cmd_dir,     0 },
-  { "speed",      "speed | speed <km/h>: drive at a speed, ramps at accel", cmd_speed,   0 },
-  { "rpm",        "rpm | rpm <n>: drive at a wheel rpm, ramps at accel", cmd_rpm,        0 },
+  { "speed",      "speed | speed <km/h>: drive at a speed, ramps at accel/decel", cmd_speed, 0 },
+  { "rpm",        "rpm | rpm <n>: drive at a wheel rpm, ramps at accel/decel", cmd_rpm,  0 },
+  { "brake",      "brake to standstill at decel, then hold the levels",  cmd_brake,      0 },
   { "ppr",        "ppr | ppr <n>: pulses per turn, 1..1000 (stopped)",   cmd_ppr,        0 },
   { "wheel",      "wheel | wheel <mm>: wheel diameter, 100..2000 (stopped)", cmd_wheel,  0 },
-  { "accel",      "accel | accel <m/s2>: ramp rate, 0..10, 0 = no ramp", cmd_accel,      0 },
-  { "save",       "save ppr, wheel, accel, dir in flash (stopped)",      cmd_save,       0 },
-  { "defaults",   "200 ppr, 920 mm, accel 0, fwd (stopped; then save)",  cmd_defaults,   0 },
+  { "accel",      "accel | accel <m/s2>: speed-up rate, 0..50, 0 = at once", cmd_accel,  0 },
+  { "decel",      "decel | decel <m/s2>: slow-down rate, 0..50, 0 = at once", cmd_decel, 0 },
+  { "vmax",       "vmax | vmax <km/h>: speed limit for speed/rpm, 1..9999", cmd_vmax,   0 },
+  { "save",       "save ppr, wheel, accel, decel, vmax, dir in flash (stopped)", cmd_save, 0 },
+  { "defaults",   "200 ppr, 920 mm, accel/decel 0, vmax 600, fwd (stopped)", cmd_defaults, 0 },
   { "rx",         "rx | rx reset: receiver values (J8.2, J8.3) / zero distance", cmd_rx, 0 },
   { "monitor",    "receiver values every 0.5 s until Enter",             cmd_monitor,    0 },
   { "reset",      "software reset (output off until the next start)",    cmd_reset,      0 },

@@ -14,8 +14,8 @@ terminal at **0.01 Hz to 50 kHz**:
   frequency, duty, phase, direction, speed, distance, acceleration and faults (`rx`, `monitor`).
   Loopback test on one board: wire **J8.6 → J8.2** and **J8.7 → J8.3**.
 
-- **Speed model**: `speed <km/h>` drives the outputs at a train speed, with acceleration ramps
-  (`accel`). Pulses per turn (`ppr`) and wheel diameter (`wheel`) are shared by the outputs and the
+- **Speed model**: `speed <km/h>` drives the outputs at a train speed, with acceleration and
+  deceleration ramps (`accel`, `decel`), a speed limit (`vmax`, default 600 km/h) and `brake`. Pulses per turn (`ppr`) and wheel diameter (`wheel`) are shared by the outputs and the
   receiver; defaults **200 pulses per turn, 920 mm wheel**. `save` keeps the settings in flash.
 
 ```
@@ -33,7 +33,7 @@ terminal at **0.01 Hz to 50 kHz**:
 | Duty cycle | 50 % (toggle mode: exact for every frequency) |
 | Resolution | J8.1: 12.5 ns per half period (80 MHz, 32-bit timer). A/B: 16-bit timer with prescaler, half period = N × P ticks (N a multiple of 4); error below 0.01 % except at the top of the range (0.25 % at most). `freq` shows both actual values |
 | Accuracy | MCU clock is HSI16 without a crystal: about ±1 % absolute. Measure with a frequency counter if it matters |
-| Power-up | all outputs **off** (pins not driven) until `start` or `speed`; ppr, wheel, accel and direction from flash (`save`), else the defaults |
+| Power-up | all outputs **off** (pins not driven) until `start` or `speed`; ppr, wheel, accel, decel, vmax and direction from flash (`save`), else the defaults. Frequency 100 Hz until set: a plain `start` uses the last `freq`/`speed`/`rpm` value |
 | Receiver inputs | J8.2 (PA6, TIM3_CH1), J8.3 (PA7, TIM3_CH2); **3.3 V logic only**, 40 kΩ pull-down, 100 ns filter; edge time stamps 12.5 ns |
 
 > The real OPG outputs 10–30 V or a 7–16 mA current. J8 gives 3.3 V logic only: connect a scope, logic
@@ -68,15 +68,18 @@ Every reply that changes something starts with `OK`; errors start with `ERR` and
 | `stop low` | stop and force all outputs low |
 | `dir` | show the direction (`fwd` or `rev`) |
 | `dir fwd`, `dir rev` | forward: A leads B by 90°; reverse: B leads A. Only while stopped (`ERR stop first` otherwise): a real wheel changes direction only at standstill |
-| `speed` | show the speed now, the target, the acceleration, the state (`ramping`, `steady`, `standstill`), the distance since start and the output frequency |
-| `speed <km/h>` | drive at this speed, 0 … the maximum for the current ppr and wheel (50 kHz; 2601 km/h at 200 ppr, 920 mm), up to 2 decimals. Starts the outputs from standstill if needed. With `accel` > 0 the speed ramps to the target; `speed 0` brakes to standstill and stops the outputs (levels held). See 4c |
+| `speed` | show the speed now, the target, accel and decel, the state (`ramping`, `steady`, `standstill`), the distance since start and the output frequency |
+| `speed <km/h>` | drive at this speed, 0 … `vmax` (default 600 km/h; never above 50 kHz, which is 2601 km/h at 200 ppr, 920 mm), up to 2 decimals. Starts the outputs from standstill if needed. The speed rises at `accel` and falls at `decel` (0 = at once); `speed 0` slows to standstill and stops the outputs (levels held). See 4c |
+| `brake` | slow to standstill at `decel`, then stop with the levels held (same as `speed 0`). With decel 0 it stops at once. `stop` always stops at once |
 | `rpm` | same as `speed`; the second line shows the wheel rpm now and the target |
 | `rpm <n>` | drive at a wheel speed in turns per minute, up to 2 decimals, like `speed` (same ramp, start and stop rules). rpm = f × 60 / ppr: 500 rpm at 200 ppr = 1666.7 Hz = 86.71 km/h with a 920 mm wheel. Maximum 50 kHz × 60 / ppr (15000 rpm at 200 ppr) |
 | `ppr`, `ppr <n>` | show / set the pulses per turn, 1 … 1000. Only at standstill |
 | `wheel`, `wheel <mm>` | show / set the wheel diameter, 100 … 2000 mm. Only at standstill |
-| `accel`, `accel <m/s²>` | show / set the ramp rate for `speed`, 0 … 10 m/s², up to 3 decimals. 0 = a new speed applies at once. Also while moving |
-| `save` | write ppr, wheel, accel and direction to flash (loaded at power-up). Only at standstill |
-| `defaults` | 200 ppr, 920 mm, accel 0, forward. Applies at once, kept only after `save`. Only at standstill |
+| `accel`, `accel <m/s²>` | show / set the speed-up rate for `speed` and `rpm`, 0 … 50 m/s², up to 3 decimals. 0 = a higher speed applies at once. Also while moving |
+| `decel`, `decel <m/s²>` | show / set the slow-down rate for `speed`, `rpm` and `brake`, 0 … 50 m/s². 0 = a lower speed applies at once. Also while moving |
+| `vmax`, `vmax <km/h>` | show / set the speed limit for `speed` and `rpm`, 1 … 9999 km/h (default 600). `freq` is not limited. Also while moving: a train already above a new, lower limit keeps its speed until the next `speed` |
+| `save` | write ppr, wheel, accel, decel, vmax and direction to flash (loaded at power-up). Only at standstill |
+| `defaults` | 200 ppr, 920 mm, accel 0, decel 0, vmax 600 km/h, forward. Applies at once, kept only after `save`. Only at standstill |
 | `rx` | receiver values once: status, frequency and duty of A and B, phase and direction, speed and wheel rpm, acceleration, distance, pulse count, lost edges |
 | `rx reset` | set the receiver distance and pulse count to 0 |
 | `monitor` | receiver values, one line every 0.5 s, until a key is pressed (Enter stops it; a typed command then runs) |
@@ -176,11 +179,13 @@ exactly; against an external sensor the absolute error is that of HSI16 (about �
 | `speed 100`, accel 0.5 | outputs start from standstill and the speed rises by 0.5 m/s² (1.8 km/h per second) to 100 km/h; the frequency is updated every 20 ms without short pulses |
 | `speed 50` while ramping or steady | ramps from the speed now to 50 km/h (up or down) |
 | `rpm 500` | the same as `speed` with the target given as wheel rpm (86.71 km/h at 920 mm) |
-| `speed 0`, accel > 0 | brakes at accel; at 0 the outputs stop and **hold their levels** (like a stopped wheel), state `standstill` |
-| `speed 0`, accel 0 | stops at once, levels held |
+| `speed 0` or `brake`, decel > 0 | slows at decel; at 0 the outputs stop and **hold their levels** (like a stopped wheel), state `standstill` |
+| `speed 0` or `brake`, decel 0 | stops at once, levels held |
+| `speed 50` while at 100 km/h | slows at **decel**; speeding up always uses **accel** |
 | `freq`, `start` | set the frequency directly, no ramp; a running ramp is cancelled |
 | `stop`, `stop low` | stop at once; a running ramp is cancelled |
-| `accel 0` during a ramp | jumps to the target speed |
+| `accel 0` / `decel 0` during a ramp | jumps to the target speed |
+| `speed 700` with vmax 600 | `ERR … max 600.00 km/h (vmax 600 km/h, …)`, nothing changes |
 
 Below 0.01 Hz (the timer limit) a ramp holds 0.01 Hz until the speed reaches 0. **Distance** in the speed
 line = A pulses since the last start × π × wheel / ppr (negative in reverse). `ppr`, `wheel`, `save` and
@@ -189,9 +194,9 @@ does not change size at speed, and a flash page erase stalls the CPU for about 2
 
 ```
 > accel 0.5
-OK settings: 200 ppr, wheel 920 mm (14.451 mm per pulse, max 2601.23 km/h), accel 0.500 m/s2, dir fwd: not saved (type save)
+OK settings: 200 ppr, wheel 920 mm (14.451 mm per pulse, max 600.00 km/h), accel 0.500 m/s2, decel 0.000 m/s2, vmax 600 km/h, dir fwd: not saved (type save)
 > speed 100
-OK speed 0.00 km/h, target 100.00 km/h, accel 0.500 m/s2: ramping, distance 0.000 m since start
+OK speed 0.00 km/h, target 100.00 km/h, accel 0.500 m/s2, decel 0.000 m/s2: ramping, distance 0.000 m since start
 wheel 0.00 rpm, target 576.65 rpm
 ...
 > save
@@ -214,7 +219,8 @@ both directions (at 0.5 Hz, from the pin levels). With the loopback wires fitted
 receiver (frequency, duty, phase 90°/270°, speed, distance up/down, 1 Hz, standstill, `monitor`); without
 them these checks are skipped. Stage 3 checks: rejected settings, `speed 100` → 1922.16 Hz, a 5 m/s² ramp
 to 36 km/h and back to standstill, `ppr`/`save` refused while moving, and `save` → `reset` → settings
-loaded from flash. The test saves your original ppr, wheel, accel and direction back at the end. It ends with all outputs stopped and low. The absolute
+loaded from flash. Receiver checks also run at 10 kHz and 50 kHz (frequency, duty, phase, speed, no lost edges). The test
+saves your original ppr, wheel, accel, decel, vmax and direction back at the end. It ends with all outputs stopped and low. The absolute
 frequency, the 90° phase and the waveform need a scope (`docs/MANUAL_TEST.md`; ground on J6 pin 2).
 
 ## 6. Firmware update

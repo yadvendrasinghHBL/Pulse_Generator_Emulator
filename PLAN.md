@@ -191,3 +191,10 @@ Reference OPG (datasheet §3.1 and product page): 50 % square wave (40–60 %), 
   1000.0 Hz, duty 50.0 %, phase 90.0° forward / 270.0° reverse, 52.02 km/h, distance +1730 pulses in 2 s,
   683 -> -317 in reverse, 1.0 Hz at `start 1`, standstill 2 s after stop, `monitor` with the rpm column
   (300.00 rpm at 1000 Hz). Still open: T13 (live fault by pulling a wire) and scope check 3.4.
+- 2026-11-06: On request: `decel` (separate slow-down rate), `brake`, `vmax` speed limit (default 600 km/h,
+  saved), accel/decel up to 50 m/s²; settings record version 2 (version 1 records load with decel = accel,
+  vmax 600). Receiver tests at 10 kHz and 50 kHz added. Board 1 (UART flash, loopback fitted):
+  `pulse_test.py` ALL CHECKS PASSED (87/87): vmax 600 -> speed 600 = 11534.0 Hz, 600.01 refused; vmax 100
+  limits speed and rpm; brake at decel 10 from 36 km/h: 18.0 km/h after 0.50 s, standstill within 1.5 s;
+  accel 50: 0 -> 180 km/h steady within 1.4 s (3460.2 Hz); receiver at 10 kHz: 10000.0 Hz, 50.0 %, 90.0°,
+  520.25 km/h, 0 lost edges; at 50 kHz: 50000.0 Hz, 50.0 %, 90.0°, 2601.24 km/h, 0 lost edges.

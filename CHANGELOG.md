@@ -16,6 +16,10 @@ A GitHub release is created from the section of the tagged version.
   `accel <m/s²>` (0 = at once); `speed 0` brakes to standstill and holds the levels. Settings `ppr`
   (1–1000) and `wheel` (100–2000 mm), shared with the receiver; `save` keeps ppr, wheel, accel and
   direction in the last flash page, `defaults` restores 200 ppr / 920 mm / 0 / forward.
+- `decel <m/s²>` (slow-down rate, used by `speed` when lowering and by `brake`), `brake` (slow to
+  standstill at decel), `vmax <km/h>` speed limit for `speed`/`rpm` (default 600 km/h); `accel` and
+  `decel` up to 50 m/s². Saved settings from earlier 0.4.0 builds load with decel = accel, vmax 600.
+- `pulse_test.py`: receiver checks at 10 kHz and 50 kHz (frequency, duty, phase, speed, no lost edges).
 - `rpm <n>`: drive at a wheel speed in turns per minute (same ramp as `speed`); wheel rpm shown by
   `speed`, `status`, `rx` and `monitor`.
 - `status` shows the speed, the distance since start and the settings; the banner shows where the

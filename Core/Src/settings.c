@@ -17,7 +17,7 @@
 #include <stddef.h>
 
 #define REC_MAGIC     0x31534750U    /* "PGS1" */
-#define REC_VERSION   1U
+#define REC_VERSION   2U             /* 1: no decel/vmax (reserved = 0), still loaded */
 #define SLOTS         (SETTINGS_PAGE_BYTES / sizeof(rec_t))
 
 typedef struct {
@@ -29,7 +29,9 @@ typedef struct {
   uint8_t  dir;          /* quad_dir_t */
   uint8_t  pad[3];
   uint32_t seq;          /* save counter, for diagnostics */
-  uint32_t reserved[2];
+  uint16_t decel_mm_s2;  /* version 2; 0 in version 1 records */
+  uint16_t vmax_kmh;     /* version 2; 0 in version 1 records */
+  uint32_t reserved;
   uint32_t crc;          /* CRC-32 of all bytes before it */
 } rec_t;
 
@@ -61,8 +63,14 @@ static uint32_t crc32(const void *data, size_t len)
 
 static int valid(const rec_t *r)
 {
-  return r->magic == REC_MAGIC && r->version == REC_VERSION &&
-         r->crc == crc32(r, offsetof(rec_t, crc)) &&
+  if (r->magic != REC_MAGIC || r->crc != crc32(r, offsetof(rec_t, crc))) {
+    return 0;
+  }
+  if (r->version == 2U && (r->decel_mm_s2 > SETTINGS_ACCEL_MAX_MM_S2 ||
+                           r->vmax_kmh < SETTINGS_VMAX_MIN_KMH || r->vmax_kmh > SETTINGS_VMAX_MAX_KMH)) {
+    return 0;
+  }
+  return (r->version == 1U || r->version == 2U) &&
          r->ppr >= SETTINGS_PPR_MIN && r->ppr <= SETTINGS_PPR_MAX &&
          r->wheel_mm >= SETTINGS_WHEEL_MIN_MM && r->wheel_mm <= SETTINGS_WHEEL_MAX_MM &&
          r->accel_mm_s2 <= SETTINGS_ACCEL_MAX_MM_S2 && r->dir <= (uint8_t)QUAD_REV;
@@ -87,7 +95,19 @@ static void set_defaults(rec_t *r)
   r->ppr = SETTINGS_PPR_DEFAULT;
   r->wheel_mm = SETTINGS_WHEEL_DEFAULT_MM;
   r->accel_mm_s2 = SETTINGS_ACCEL_DEFAULT_MM_S2;
+  r->decel_mm_s2 = SETTINGS_DECEL_DEFAULT_MM_S2;
+  r->vmax_kmh = SETTINGS_VMAX_DEFAULT_KMH;
   r->dir = (uint8_t)QUAD_FWD;
+}
+
+/* Version 1 records had one rate for both directions and no speed limit */
+static void upgrade(rec_t *r)
+{
+  if (r->version == 1U) {
+    r->version = REC_VERSION;
+    r->decel_mm_s2 = r->accel_mm_s2;
+    r->vmax_kmh = SETTINGS_VMAX_DEFAULT_KMH;
+  }
 }
 
 void settings_init(void)
@@ -105,6 +125,7 @@ void settings_init(void)
     used = i + 1U;
     r = *(const rec_t *)slot(i);
     if (valid(&r)) {
+      upgrade(&r);
       saved = r;
       from_flash = 1;
     }
@@ -121,7 +142,8 @@ int settings_from_flash(void)
 int settings_dirty(void)
 {
   return cur.ppr != saved.ppr || cur.wheel_mm != saved.wheel_mm ||
-         cur.accel_mm_s2 != saved.accel_mm_s2 || (uint8_t)quad_dir() != saved.dir;
+         cur.accel_mm_s2 != saved.accel_mm_s2 || cur.decel_mm_s2 != saved.decel_mm_s2 ||
+         cur.vmax_kmh != saved.vmax_kmh || (uint8_t)quad_dir() != saved.dir;
 }
 
 uint32_t settings_slots_used(void)
@@ -171,6 +193,34 @@ int settings_set_accel_mm_s2(uint32_t a)
   return 0;
 }
 
+uint32_t settings_decel_mm_s2(void)
+{
+  return cur.decel_mm_s2;
+}
+
+int settings_set_decel_mm_s2(uint32_t a)
+{
+  if (a > SETTINGS_ACCEL_MAX_MM_S2) {
+    return -1;
+  }
+  cur.decel_mm_s2 = (uint16_t)a;
+  return 0;
+}
+
+uint32_t settings_vmax_kmh(void)
+{
+  return cur.vmax_kmh;
+}
+
+int settings_set_vmax_kmh(uint32_t kmh)
+{
+  if (kmh < SETTINGS_VMAX_MIN_KMH || kmh > SETTINGS_VMAX_MAX_KMH) {
+    return -1;
+  }
+  cur.vmax_kmh = (uint16_t)kmh;
+  return 0;
+}
+
 double settings_m_per_pulse(void)
 {
   return 3.14159265358979 * (double)cur.wheel_mm / 1000.0 / (double)cur.ppr;
@@ -192,7 +242,8 @@ int settings_save(void)
   r.dir = (uint8_t)quad_dir();
   r.pad[0] = r.pad[1] = r.pad[2] = 0;
   r.seq = saved.seq + 1U;
-  r.reserved[0] = r.reserved[1] = 0;
+  r.version = REC_VERSION;
+  r.reserved = 0;
   r.crc = crc32(&r, offsetof(rec_t, crc));
 
   HAL_FLASH_Unlock();

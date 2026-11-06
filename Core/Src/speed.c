@@ -28,6 +28,12 @@ static int running(void)
   return quad_state() == PULSE_RUNNING;
 }
 
+/* Ramp rate toward the target: accel when speeding up, decel when slowing down */
+static uint32_t rate_mm_s2(void)
+{
+  return v_target >= v_now ? settings_accel_mm_s2() : settings_decel_mm_s2();
+}
+
 static double mhz_exact(double v)
 {
   return v / settings_m_per_pulse() * 1000.0;
@@ -93,10 +99,10 @@ void speed_poll(void)
     return;
   }
   last_step = now;
-  double dv = (double)settings_accel_mm_s2() / 1000.0 * (double)dt_ms / 1000.0;
+  double dv = (double)rate_mm_s2() / 1000.0 * (double)dt_ms / 1000.0;
 
   if (dv <= 0.0) {
-    v_now = v_target;             /* accel set to 0 during a ramp: go there at once */
+    v_now = v_target;             /* rate set to 0 during a ramp: go there at once */
   } else if (v_now < v_target) {
     v_now = v_now + dv < v_target ? v_now + dv : v_target;
   } else {
@@ -115,10 +121,18 @@ void speed_poll(void)
   drive_at(v_now);
 }
 
+/* Highest speed in m/s: the vmax setting, or the 50 kHz output limit if lower */
+static double v_max(void)
+{
+  double hw = (double)PULSE_MAX_MHZ / 1000.0 * settings_m_per_pulse();
+  double lim = (double)settings_vmax_kmh() / 3.6;
+
+  return lim < hw ? lim : hw;
+}
+
 uint32_t speed_max_ckmh(void)
 {
-  /* km/h x 100 at the highest output frequency */
-  return (uint32_t)((double)PULSE_MAX_MHZ / 1000.0 * settings_m_per_pulse() * 3.6 * 100.0);
+  return (uint32_t)(v_max() * 3.6 * 100.0 + 1e-6);
 }
 
 /* Wheel circumference: one turn = ppr pulses */
@@ -129,25 +143,25 @@ static double circ_m(void)
 
 uint32_t speed_max_crpm(void)
 {
-  /* rpm x 100 at the highest output frequency: f x 60 / ppr */
-  return (uint32_t)((double)PULSE_MAX_MHZ / 1000.0 * 60.0 / (double)settings_ppr() * 100.0);
+  return (uint32_t)(v_max() / circ_m() * 60.0 * 100.0);
 }
 
-/* Target v in m/s: 0 = OK, -1 = above 50 kHz or below 0.01 Hz (except 0) */
+/* Target v in m/s: 0 = OK, -1 = above the limit or below 0.01 Hz (except 0).
+ * The speed rises at accel and falls at decel (0 = at once). */
 static int set_target(double v)
 {
-  if (mhz_exact(v) > (double)PULSE_MAX_MHZ || (v > 0.0 && mhz_exact(v) < (double)PULSE_MIN_MHZ)) {
+  if (v > v_max() + 1e-9 || (v > 0.0 && mhz_exact(v) < (double)PULSE_MIN_MHZ)) {
     return -1;
   }
   v_target = v;
-  if (settings_accel_mm_s2() > 0U && (v_now > 0.0 || v > 0.0)) {
+  if (rate_mm_s2() > 0U && (v_now > 0.0 || v > 0.0)) {
     if (!ramping) {
       last_step = HAL_GetTick();
     }
     ramping = v_now != v_target;
     return 0;
   }
-  /* accel 0, or already at standstill with target 0: apply at once */
+  /* rate 0, or already at standstill with target 0: apply at once */
   ramping = 0;
   v_now = v;
   if (v > 0.0) {
@@ -160,18 +174,17 @@ static int set_target(double v)
 
 int speed_set_target_ckmh(uint32_t ckmh)
 {
-  if (ckmh > speed_max_ckmh()) {
-    return -1;
-  }
   return set_target((double)ckmh / 360.0);  /* 0.01 km/h -> m/s */
 }
 
 int speed_set_target_crpm(uint32_t crpm)
 {
-  if (crpm > speed_max_crpm()) {
-    return -1;
-  }
   return set_target((double)crpm / 100.0 / 60.0 * circ_m());
+}
+
+void speed_brake(void)
+{
+  set_target(0.0);
 }
 
 double speed_rpm(void)
